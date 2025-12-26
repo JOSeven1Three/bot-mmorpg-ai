@@ -133,7 +133,7 @@ def main(file_name, starting_value):
                 print(len(training_data))
                 
                 if len(training_data) == 500:
-                    np.save(file_name,training_data)
+                    np.save(file_name, np.array(training_data, dtype=object), allow_pickle=True)
                     print('SAVED')
                     training_data = []
                     starting_value += 1
@@ -151,6 +151,12 @@ def main(file_name, starting_value):
                 print('Pausing!')
                 paused = True
                 time.sleep(1)
+        
+        # Check for 'Q' key to quit from anywhere (not just OpenCV window)
+        if 'Q' in keys:
+            print('Q pressed - stopping data collection...')
+            cv2.destroyAllWindows()
+            break
 
 
 main(file_name, starting_value)
