@@ -192,6 +192,92 @@ class TestCommandHandler:
 
         assert result["status"] == "emergency_stopped"
 
+    def test_get_diablo_profile_exposes_helltides_overlay(self):
+        """Test Diablo IV profile exposes the companion Helltides overlay."""
+        from bot_mmorpg.bridge.handlers import CommandHandler
+
+        handler = CommandHandler()
+        profile = handler.handle_config_get_profile("diablo_4")
+
+        overlay = profile["external_overlays"]["helltides"]
+        assert overlay["name"] == "Diablo 4 Helltides Overlay"
+        assert overlay["safety_model"] == "screen_only"
+        assert overlay["run_command"][-1] == "tools/run-overlay.ps1"
+
+    def test_launch_region_catcher_is_screen_only(self):
+        """Training School can launch Region Catcher with screen-only defaults."""
+        from bot_mmorpg.bridge.handlers import CommandHandler
+
+        handler = CommandHandler()
+        fake_process = MagicMock(pid=4321)
+        fake_process.poll.return_value = None
+
+        with patch("subprocess.Popen", return_value=fake_process) as popen:
+            result = handler.handle_training_launch_region_catcher(
+                game_id="diablo_4",
+                capture_region=[0, 0, 1920, 1080],
+            )
+
+        assert result["status"] == "started"
+        assert result["screen_only"] is True
+        assert result["tool"] == "region_catcher"
+        args = popen.call_args.kwargs["args"]
+        assert "--game" in args
+        assert "diablo_4" in args
+        assert "--region" in args
+
+    def test_capture_profile_diagnostics_returns_bundle_paths(self, tmp_path):
+        """One-click diagnostics returns the annotated bundle paths."""
+        from bot_mmorpg.bridge.handlers import CommandHandler
+
+        handler = CommandHandler()
+        fake_screen = MagicMock()
+        fake_screen.size = 1
+        fake_dir = tmp_path / "diagnostics" / "diablo_4" / "20260806_120000"
+
+        with (
+            patch("bot_mmorpg.scripts.grabscreen.grab_screen", return_value=fake_screen),
+            patch(
+                "bot_mmorpg.scripts.collect_data.save_profile_diagnostics",
+                return_value=fake_dir,
+            ) as save_diag,
+        ):
+            result = handler.handle_training_capture_profile_diagnostics(
+                game_id="diablo_4",
+                output_dir=str(tmp_path),
+                capture_region=[0, 0, 1920, 1080],
+            )
+
+        assert result["status"] == "saved"
+        assert result["screen_only"] is True
+        assert result["diagnostics_dir"].endswith("20260806_120000")
+        assert result["annotated_image"].endswith("annotated_regions.png")
+        save_diag.assert_called_once()
+
+    def test_dry_run_preview_enforces_cap_and_no_input(self):
+        """Dry-run preview always launches with no-input safety flags and a cap."""
+        from bot_mmorpg.bridge.handlers import CommandHandler
+
+        handler = CommandHandler()
+        fake_process = MagicMock(pid=9876)
+        fake_process.poll.return_value = None
+
+        with patch("subprocess.Popen", return_value=fake_process) as popen:
+            result = handler.handle_inference_launch_dry_run_preview(
+                model_path="C:/models/diablo4_best.pth",
+                max_frames=999,
+            )
+
+        assert result["dry_run"] is True
+        assert result["sends_input"] is False
+        assert result["screen_only"] is True
+        assert result["max_frames"] == 300
+        args = popen.call_args.kwargs["args"]
+        assert "--dry-run" in args
+        assert "--no-gamepad" in args
+        assert "--max-frames" in args
+        assert "300" in args
+
 
 class TestBridgeServerHandling:
     """Test bridge server request handling."""

@@ -214,7 +214,48 @@ def _grab_screen_mss(region=None):
         return cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
 
 
-def find_window_region(window_title):
+def client_rect_to_screen_rect(client_rect, client_origin):
+    """
+    Convert a window client rect plus screen-space origin into screen bounds.
+
+    Args:
+        client_rect: Tuple (left, top, right, bottom) in client coordinates.
+        client_origin: Tuple (x, y) for the client area's top-left on screen.
+
+    Returns:
+        tuple: (left, top, right, bottom) in screen coordinates.
+    """
+    left, top, right, bottom = client_rect
+    origin_x, origin_y = client_origin
+    width = right - left
+    height = bottom - top
+    return (origin_x, origin_y, origin_x + width, origin_y + height)
+
+
+def get_window_region(hwnd, client_area=True):
+    """
+    Resolve a window's screen region.
+
+    Args:
+        hwnd: Native window handle
+        client_area: If True, return the exact client rectangle.
+                     If False, return the outer window rectangle.
+
+    Returns:
+        tuple: (left, top, right, bottom) screen coordinates.
+    """
+    if not (IS_WINDOWS and _WIN32_AVAILABLE):
+        return None
+
+    if not client_area:
+        return win32gui.GetWindowRect(hwnd)
+
+    client_rect = win32gui.GetClientRect(hwnd)
+    origin = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
+    return client_rect_to_screen_rect(client_rect, origin)
+
+
+def find_window_region(window_title, client_area=True):
     """
     Find a game window by title and return its screen region.
 
@@ -235,15 +276,12 @@ def find_window_region(window_title):
             if win32gui.IsWindowVisible(hwnd):
                 title = win32gui.GetWindowText(hwnd)
                 if window_title.lower() in title.lower():
-                    rect = win32gui.GetWindowRect(hwnd)
-                    # rect is (left, top, right, bottom)
+                    rect = get_window_region(hwnd, client_area=client_area)
                     result.append(rect)
 
         win32gui.EnumWindows(_enum_callback, None)
         if result:
-            left, top, right, bottom = result[0]
-            # Compensate for window borders / title bar (~30px on Windows 10/11)
-            return (left, top, right, bottom)
+            return result[0]
         return None
 
     # On Linux, attempt wmctrl-style detection via subprocess
@@ -286,6 +324,7 @@ GAME_WINDOW_TITLES = {
     "final_fantasy_xiv": ["FINAL FANTASY XIV", "FFXIV"],
     "guild_wars_2": ["Guild Wars 2"],
     "lost_ark": ["LOST ARK", "Lost Ark"],
+    "diablo_4": ["Diablo IV", "Diablo 4", "Diablo® IV"],
     "new_world": ["New World"],
 }
 

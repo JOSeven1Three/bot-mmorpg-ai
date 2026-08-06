@@ -66,6 +66,7 @@ class TestAllGameProfiles:
         "guild_wars_2",
         "final_fantasy_xiv",
         "lost_ark",
+        "diablo_4",
         "new_world",
         "dragon_ball_online",
     ]

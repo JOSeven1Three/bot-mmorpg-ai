@@ -983,6 +983,57 @@
       gap: 12px;
       margin-top: var(--ui-space-section);
     }
+    .school-tools-panel {
+      margin-top: 18px;
+      padding: 20px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(135deg, rgba(255,255,255,0.03), rgba(3,218,198,0.04));
+      box-shadow: 0 14px 28px rgba(0,0,0,0.18);
+    }
+    .school-tools-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .school-tool-card {
+      padding: 14px;
+      border-radius: 12px;
+      background: rgba(0,0,0,0.24);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .school-tool-card h4 {
+      margin: 0 0 6px;
+      font-size: 14px;
+    }
+    .school-tool-card p {
+      margin: 0 0 12px;
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .school-tool-card .btn {
+      width: 100%;
+    }
+    .school-tool-note {
+      margin-top: 12px;
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .school-tool-status {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(0,0,0,0.26);
+      border: 1px solid rgba(255,255,255,0.06);
+      color: var(--text-main);
+      font-size: 12px;
+      user-select: text;
+      -webkit-user-select: text;
+      word-break: break-word;
+    }
     @keyframes ui-step-in {
       from { opacity: 0; transform: translateY(4px); }
       to   { opacity: 1; transform: translateY(0); }
@@ -3009,6 +3060,45 @@
             <button class="btn" id="btn-wizard-next">Next</button>
           </div>
         </div>
+
+        <section class="school-tools-panel" aria-labelledby="school-tools-title">
+          <div style="display:flex; justify-content:space-between; gap:14px; align-items:flex-start; flex-wrap:wrap;">
+            <div>
+              <h3 id="school-tools-title" style="margin:0 0 6px;">Diablo IV Desktop Workflow</h3>
+              <p style="margin:0; color:var(--text-dim); font-size:13px;">
+                Screen-only tools for HUD calibration, annotated diagnostics, and capped dry-run preview.
+              </p>
+            </div>
+            <div style="font-size:11px; color:var(--secondary); font-weight:700; letter-spacing:.04em;">
+              SAFE DEFAULTS: NO GAME INPUT
+            </div>
+          </div>
+
+          <div class="school-tools-grid">
+            <article class="school-tool-card">
+              <h4>HUD Calibration</h4>
+              <p>Launch Region Catcher against the Diablo IV HUD so you can tune profile regions without enabling control input.</p>
+              <button class="btn btn-secondary" id="btn-school-region-catcher" type="button">Open Region Catcher</button>
+            </article>
+
+            <article class="school-tool-card">
+              <h4>Annotated Diagnostics</h4>
+              <p>Capture one raw frame plus an annotated region overlay and ROI template for fast profile debugging.</p>
+              <button class="btn btn-secondary" id="btn-school-diagnostics" type="button">Capture Diagnostics</button>
+            </article>
+
+            <article class="school-tool-card">
+              <h4>Dry-Run Preview</h4>
+              <p>Launch capped inference preview in <code>--dry-run</code> mode with no keyboard, mouse, or gamepad output.</p>
+              <button class="btn btn-secondary" id="btn-school-dry-run" type="button">Launch Dry Run</button>
+            </article>
+          </div>
+
+          <div class="school-tool-note">
+            These controls are Diablo IV specific, screen-only by default, and meant for calibration or debugging before any real bot run.
+          </div>
+          <div class="school-tool-status" id="school-tools-status">Training School tools idle.</div>
+        </section>
       </div>
     </div>
 

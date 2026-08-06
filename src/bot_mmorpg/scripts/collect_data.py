@@ -11,10 +11,12 @@ existing keyboard+gamepad pipeline is completely unchanged.
 """
 
 import argparse
+import datetime
+import json
 import logging
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -72,6 +74,17 @@ class InputCaptureError(DataCollectionError):
     """Raised when input capture fails."""
 
     pass
+
+
+def build_game_output_dir(base_out: str, game_id: str, task: str) -> str:
+    """Build a timestamped output folder for game-specific capture sessions."""
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = Path(base_out)
+
+    if base.as_posix() in {"data/raw", "datasets"}:
+        return str(Path("datasets") / game_id / f"{ts}_{task}")
+
+    return str(base / game_id / f"{ts}_{task}")
 
 
 def keys_to_output(keys: List[str]) -> List[int]:
@@ -296,6 +309,150 @@ def cleanup():
         pass
 
 
+def normalized_region_to_pixels(
+    normalized_region: List[float], capture_region: Tuple[int, int, int, int]
+) -> Tuple[int, int, int, int]:
+    """Convert normalized profile ROI to absolute pixel rectangle."""
+    x1, y1, x2, y2 = capture_region
+    width = x2 - x1
+    height = y2 - y1
+    rx, ry, rw, rh = normalized_region
+    left = x1 + int(rx * width)
+    top = y1 + int(ry * height)
+    right = left + int(rw * width)
+    bottom = top + int(rh * height)
+    return left, top, right, bottom
+
+
+def pixel_region_to_normalized(
+    pixel_region: List[int], capture_region: Tuple[int, int, int, int]
+) -> List[float]:
+    """Convert absolute pixel region [x1, y1, x2, y2] to normalized [x, y, w, h]."""
+    x1, y1, x2, y2 = capture_region
+    width = x2 - x1
+    height = y2 - y1
+    left, top, right, bottom = pixel_region
+    return [
+        round((left - x1) / width, 6),
+        round((top - y1) / height, 6),
+        round((right - left) / width, 6),
+        round((bottom - top) / height, 6),
+    ]
+
+
+def load_roi_overrides(
+    overrides_path: Path,
+    capture_region: Tuple[int, int, int, int],
+    base_regions: Dict[str, List[float]],
+) -> Dict[str, List[float]]:
+    """
+    Load ROI overrides from JSON and merge them into profile regions.
+
+    Supported formats per region:
+    - normalized list: [x, y, w, h]
+    - pixel box object: {"pixels": [x1, y1, x2, y2]}
+    """
+    payload = json.loads(overrides_path.read_text(encoding="utf-8"))
+    merged = dict(base_regions)
+
+    for name, value in payload.items():
+        if isinstance(value, list) and len(value) == 4:
+            merged[name] = [float(part) for part in value]
+        elif isinstance(value, dict) and "pixels" in value and len(value["pixels"]) == 4:
+            merged[name] = pixel_region_to_normalized(value["pixels"], capture_region)
+        else:
+            raise ValueError(
+                f"Invalid ROI override for '{name}'. Use [x,y,w,h] or {{\"pixels\": [x1,y1,x2,y2]}}."
+            )
+
+    return merged
+
+
+def annotate_profile_regions(
+    screen: np.ndarray,
+    important_regions: Dict[str, List[float]],
+    capture_region: Tuple[int, int, int, int],
+) -> Tuple[np.ndarray, Dict[str, Dict[str, int]]]:
+    """Draw profile ROIs over a captured frame and return pixel metadata."""
+    annotated = screen.copy()
+    x1, y1, _, _ = capture_region
+    metadata: Dict[str, Dict[str, int]] = {}
+
+    for idx, (name, normalized) in enumerate(important_regions.items()):
+        left, top, right, bottom = normalized_region_to_pixels(normalized, capture_region)
+        local_left = max(0, left - x1)
+        local_top = max(0, top - y1)
+        local_right = max(0, right - x1)
+        local_bottom = max(0, bottom - y1)
+        color = (
+            int(80 + (idx * 53) % 175),
+            int(220 - (idx * 41) % 140),
+            int(120 + (idx * 67) % 135),
+        )
+        cv2.rectangle(annotated, (local_left, local_top), (local_right, local_bottom), color, 2)
+        cv2.putText(
+            annotated,
+            name,
+            (local_left + 4, max(18, local_top + 18)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+        metadata[name] = {
+            "x1": left,
+            "y1": top,
+            "x2": right,
+            "y2": bottom,
+            "width": right - left,
+            "height": bottom - top,
+        }
+
+    return annotated, metadata
+
+
+def save_profile_diagnostics(
+    screen: np.ndarray,
+    game_profile,
+    capture_region: Tuple[int, int, int, int],
+    out_dir: Path,
+    important_regions: Optional[Dict[str, List[float]]] = None,
+) -> Path:
+    """Save raw capture, annotated capture, and JSON profile-region metadata."""
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    diag_dir = out_dir / "diagnostics" / game_profile.id / timestamp
+    diag_dir.mkdir(parents=True, exist_ok=True)
+
+    if important_regions is None:
+        important_regions = game_profile.important_regions
+
+    annotated, region_metadata = annotate_profile_regions(
+        screen, important_regions, capture_region
+    )
+    cv2.imwrite(str(diag_dir / "raw.png"), screen)
+    cv2.imwrite(str(diag_dir / "annotated_regions.png"), annotated)
+    metadata = {
+        "game_id": game_profile.id,
+        "game_name": game_profile.name,
+        "capture_region": list(capture_region),
+        "typical_resolution": game_profile.typical_resolution,
+        "normalized_regions": important_regions,
+        "regions": region_metadata,
+    }
+    (diag_dir / "metadata.json").write_text(
+        json.dumps(metadata, indent=2), encoding="utf-8"
+    )
+    template = {
+        name: {"pixels": [box["x1"], box["y1"], box["x2"], box["y2"]]}
+        for name, box in region_metadata.items()
+    }
+    (diag_dir / "roi_overrides.template.json").write_text(
+        json.dumps(template, indent=2), encoding="utf-8"
+    )
+    return diag_dir
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """
     Main data collection function.
@@ -354,6 +511,22 @@ Example:
         action="store_true",
         help="Enable mouse recording (additive – appends 6 values to action vector)",
     )
+    parser.add_argument(
+        "--diagnose-profile",
+        action="store_true",
+        help=(
+            "Capture one frame and save raw/annotated profile-region diagnostics. "
+            "Requires --game."
+        ),
+    )
+    parser.add_argument(
+        "--roi-overrides",
+        default=None,
+        help=(
+            "Optional JSON file with per-region overrides for diagnostics. "
+            "Each region may be [x,y,w,h] normalized or {\"pixels\": [x1,y1,x2,y2]}."
+        ),
+    )
     args = parser.parse_args(argv)
 
     # Environment variable fallback for --mouse (used by Tauri/launcher UI)
@@ -389,11 +562,8 @@ Example:
                 logger.info(f"Loaded game profile: {game_profile.name}")
 
                 # Auto-configure output directory
-                if args.out == "data/raw":
-                    import datetime
-
-                    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    args.out = f"datasets/{args.game}/{ts}_{args.task}"
+                if args.out in {"data/raw", "datasets"}:
+                    args.out = build_game_output_dir(args.out, args.game, args.task)
                     logger.info(f"Output directory set to: {args.out}")
 
                 # Log task config if available
@@ -478,6 +648,34 @@ Example:
     except Exception as e:
         logger.error(f"Cannot create output directory: {e}")
         return 1
+
+    if args.diagnose_profile:
+        if game_profile is None:
+            logger.error("--diagnose-profile requires --game so profile regions are known.")
+            return 1
+        try:
+            important_regions = game_profile.important_regions
+            if args.roi_overrides:
+                overrides_path = Path(args.roi_overrides)
+                important_regions = load_roi_overrides(
+                    overrides_path, region, game_profile.important_regions
+                )
+                logger.info(f"Loaded ROI overrides from: {overrides_path.resolve()}")
+            screen = grab_screen(region=region)
+            if screen is None or screen.size == 0:
+                raise ScreenCaptureError("Screen capture returned empty image")
+            diag_dir = save_profile_diagnostics(
+                screen,
+                game_profile,
+                region,
+                out_dir,
+                important_regions=important_regions,
+            )
+            logger.info(f"Saved profile diagnostics to: {diag_dir.resolve()}")
+            return 0
+        except Exception as e:
+            logger.error(f"Profile diagnostics failed: {e}")
+            return 1
 
     # Find starting file index
     starting_value = 1

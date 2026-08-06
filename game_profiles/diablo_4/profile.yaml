@@ -1,0 +1,185 @@
+game:
+  id: diablo_4
+  name: Diablo IV
+  publisher: Blizzard Entertainment
+display:
+  typical_resolution:
+  - 2560
+  - 1009
+  ui_scale_range:
+  - 0.8
+  - 1.2
+  important_regions:
+    health_orb:
+    - 0.338672
+    - 0.838454
+    - 0.066406
+    - 0.150644
+    resource_orb:
+    - 0.602344
+    - 0.840436
+    - 0.059766
+    - 0.145689
+    skill_bar:
+    - 0.426563
+    - 0.873142
+    - 0.145313
+    - 0.11893
+    minimap:
+    - 0.885938
+    - 0.03667
+    - 0.107813
+    - 0.22002
+    objective_tracker:
+    - 0.850781
+    - 0.33003
+    - 0.148438
+    - 0.368682
+    center_focus:
+    - 0.22
+    - 0.16
+    - 0.56
+    - 0.62
+integrations:
+  external_overlays:
+    helltides:
+      name: Diablo 4 Helltides Overlay
+      project_path: C:/Users/Jose/HermesOS/Projects/Diablo4 Helltides overlay
+      run_command:
+      - powershell
+      - -ExecutionPolicy
+      - Bypass
+      - -File
+      - tools/run-overlay.ps1
+      diagnose_command:
+      - powershell
+      - -ExecutionPolicy
+      - Bypass
+      - -File
+      - tools/run-overlay.ps1
+      - -Diagnose
+      calibration_command:
+      - powershell
+      - -ExecutionPolicy
+      - Bypass
+      - -File
+      - tools/calibrate-profile.ps1
+      calibration_profile: '%LOCALAPPDATA%/Diablo4HelltidesOverlay/calibration.json'
+      captures_dir: '%LOCALAPPDATA%/Diablo4HelltidesOverlay/captures'
+      safety_model: screen_only
+      notes: External WPF overlay; uses screen capture and public Helltides data only.
+input:
+  action_space: hybrid
+  num_actions: 15
+  requires_mouse: true
+  mouse_precision: high
+  default_bindings:
+  - key: mouse_left
+    action: move_interact_basic_skill
+  - key: mouse_right
+    action: core_skill
+  - key: '1'
+    action: skill_1
+  - key: '2'
+    action: skill_2
+  - key: '3'
+    action: skill_3
+  - key: '4'
+    action: skill_4
+  - key: SPACE
+    action: evade
+  - key: Q
+    action: potion
+  - key: TAB
+    action: map
+  - key: E
+    action: interact
+  - key: T
+    action: town_portal
+  - key: C
+    action: character_panel
+  - key: I
+    action: inventory
+  - key: mouse_middle
+    action: force_move
+  - key: SHIFT
+    action: hold_position
+training:
+  recommended_architecture: efficientnet_lstm
+  recommended_input_size:
+  - 256
+  - 256
+  temporal_frames: 6
+  minimum_samples: 12000
+  class_balance_tolerance: 0.2
+  learning_rate:
+    initial: 0.0005
+    decay_factor: 0.1
+    decay_epochs:
+    - 20
+    - 40
+hardware_tiers:
+  low:
+    architecture: mobilenetv3
+    batch_size: 6
+    input_size:
+    - 160
+    - 160
+    temporal_frames: 0
+    workers: 2
+  medium:
+    architecture: efficientnet_lstm
+    batch_size: 12
+    input_size:
+    - 224
+    - 224
+    temporal_frames: 4
+    workers: 4
+  high:
+    architecture: efficientnet_lstm
+    batch_size: 24
+    input_size:
+    - 256
+    - 256
+    temporal_frames: 6
+    workers: 8
+tasks:
+  combat:
+    description: Isometric combat with cooldown, evade, health, and resource awareness
+    priority: reaction_time
+    temporal: true
+    recommended_architecture: efficientnet_lstm
+    augmentation:
+    - brightness
+    - contrast
+    - noise
+    fps_target: 45
+  traversal:
+    description: Short route following with cursor movement and obstacle recovery
+    priority: spatial_awareness
+    temporal: true
+    recommended_architecture: resnet18_lstm
+    augmentation:
+    - brightness
+    - perspective
+    - contrast
+    fps_target: 30
+  loot_collection:
+    description: Post-combat movement, item pickup, and interact prompts
+    priority: accuracy
+    temporal: false
+    recommended_architecture: efficientnet_simple
+    augmentation:
+    - brightness
+    - contrast
+    - color_jitter
+    fps_target: 20
+  ui_management:
+    description: Inventory, map, and town-portal UI interaction
+    priority: precision
+    temporal: false
+    recommended_architecture: efficientnet_simple
+    augmentation:
+    - brightness
+    - contrast
+    fps_target: 10

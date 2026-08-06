@@ -295,6 +295,13 @@ ACTION_NAMES = [
 ]
 
 
+def action_name_for_index(action_idx: int) -> str:
+    """Return a stable display name for a predicted discrete action."""
+    if action_idx < len(ACTION_NAMES):
+        return ACTION_NAMES[action_idx]
+    return f"action_{action_idx}"
+
+
 # =============================================================================
 # Keyboard Actions
 # =============================================================================
@@ -809,6 +816,17 @@ def main(argv=None) -> int:
         "--delay", type=float, default=0, help="Delay between frames (seconds)"
     )
     parser.add_argument("--verbose", action="store_true", help="Verbose output")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Log predicted actions without sending keyboard, mouse, or gamepad input.",
+    )
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=0,
+        help="Stop after N inference frames (0 = run until stopped). Useful with --dry-run.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -867,8 +885,12 @@ def main(argv=None) -> int:
     t_now = prev
     t_plus = prev
 
+    if args.dry_run:
+        print("DRY RUN ENABLED: predictions will be logged, not executed.")
     print("Running inference... (Press T to pause, ESC to quit)")
     print("-" * 60)
+
+    processed_frames = 0
 
     try:
         while True:
@@ -897,22 +919,22 @@ def main(argv=None) -> int:
                 action_idx, action_val, predictions = engine.predict(screen)
 
                 # Execute action
-                engine.execute_action(action_idx, action_val)
+                if not args.dry_run:
+                    engine.execute_action(action_idx, action_val)
 
                 # Execute mouse output if model supports it (additive)
-                if engine.has_mouse_output:
+                if engine.has_mouse_output and not args.dry_run:
                     engine.execute_mouse(predictions)
 
                 # Get action name
-                action_name = (
-                    ACTION_NAMES[action_idx]
-                    if action_idx < len(ACTION_NAMES)
-                    else f"action_{action_idx}"
-                )
+                action_name = action_name_for_index(action_idx)
 
                 # Check if stuck or reset counter when moving normally
                 if engine.check_stuck(delta_count):
-                    engine.evasive_maneuver()
+                    if args.dry_run:
+                        print("DRY RUN: stuck detected; evasive maneuver skipped.")
+                    else:
+                        engine.evasive_maneuver()
                 else:
                     engine.reset_stuck_counter()
 
@@ -933,7 +955,15 @@ def main(argv=None) -> int:
                 if args.delay > 0:
                     time.sleep(args.delay)
 
+                processed_frames += 1
+                if args.max_frames > 0 and processed_frames >= args.max_frames:
+                    print(f"\nReached --max-frames={args.max_frames}; exiting...")
+                    break
+
             # Check for pause/escape
+            if args.max_frames > 0 and processed_frames >= args.max_frames:
+                break
+
             if check_escape():
                 print("\nESC pressed - exiting...")
                 break
@@ -956,8 +986,9 @@ def main(argv=None) -> int:
 
     finally:
         # Clean up
-        release_all_keys()
-        if VJOY_AVAILABLE:
+        if not args.dry_run:
+            release_all_keys()
+        if VJOY_AVAILABLE and not args.dry_run:
             ultimate_release()
         print("\nInference stopped.")
 

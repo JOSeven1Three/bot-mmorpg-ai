@@ -3664,6 +3664,97 @@ function escapeHtml(str) {
     .replace(/'/g, "&#039;");
 }
 
+function setSchoolToolsStatus(message, type = "info") {
+  const el = getEl("school-tools-status");
+  if (!el) return;
+  el.textContent = message;
+  el.dataset.state = type;
+}
+
+function getDryRunModelPath() {
+  return (
+    (selectedLocalModelPath || "").trim()
+    || getEl("local-model-select")?.value?.trim()
+    || ""
+  );
+}
+
+async function launchSchoolRegionCatcher() {
+  if (!invoke) {
+    setSchoolToolsStatus("Backend unavailable for Region Catcher.", "error");
+    return;
+  }
+  setSchoolToolsStatus("Launching Region Catcher for Diablo IV...", "busy");
+  try {
+    const result = await invoke("training_launch_region_catcher", {
+      game_id: "diablo_4",
+    });
+    setSchoolToolsStatus(
+      `Region Catcher ${result.status}. Screen-only profile editor launched for Diablo IV.`,
+      "success"
+    );
+    logToTerminal("Training School: launched Diablo IV Region Catcher", "success");
+  } catch (e) {
+    setSchoolToolsStatus(`Region Catcher failed: ${e}`, "error");
+    logToTerminal(`Training School Region Catcher error: ${e}`, "error");
+  }
+}
+
+async function captureSchoolDiagnostics() {
+  if (!invoke) {
+    setSchoolToolsStatus("Backend unavailable for diagnostics capture.", "error");
+    return;
+  }
+  setSchoolToolsStatus("Capturing annotated Diablo IV diagnostics...", "busy");
+  try {
+    const result = await invoke("training_capture_profile_diagnostics", {
+      game_id: "diablo_4",
+    });
+    const dir = result.diagnostics_dir || "artifacts/diagnostics";
+    setSchoolToolsStatus(
+      `Diagnostics saved to ${dir}. Raw, annotated, metadata, and ROI template captured.`,
+      "success"
+    );
+    logToTerminal(`Training School: saved Diablo IV diagnostics to ${dir}`, "success");
+  } catch (e) {
+    setSchoolToolsStatus(`Diagnostics capture failed: ${e}`, "error");
+    logToTerminal(`Training School diagnostics error: ${e}`, "error");
+  }
+}
+
+async function launchSchoolDryRunPreview() {
+  const modelPath = getDryRunModelPath();
+  if (!modelPath) {
+    setSchoolToolsStatus(
+      "Select a local trained model in ModelHub before launching dry-run preview.",
+      "error"
+    );
+    return;
+  }
+  if (!invoke) {
+    setSchoolToolsStatus("Backend unavailable for dry-run preview.", "error");
+    return;
+  }
+  setSchoolToolsStatus("Launching capped dry-run preview (no input)...", "busy");
+  try {
+    const result = await invoke("inference_launch_dry_run_preview", {
+      model_path: modelPath,
+      max_frames: 120,
+    });
+    setSchoolToolsStatus(
+      `Dry-run preview ${result.status}. No input is sent and preview stops after ${result.max_frames} frames.`,
+      "success"
+    );
+    logToTerminal(
+      `Training School: launched dry-run preview for ${modelPath} (${result.max_frames} frame cap)`,
+      "success"
+    );
+  } catch (e) {
+    setSchoolToolsStatus(`Dry-run preview failed: ${e}`, "error");
+    logToTerminal(`Training School dry-run error: ${e}`, "error");
+  }
+}
+
 // =============================================================================
 // GAME PRESET GRID UI
 // =============================================================================
@@ -3780,4 +3871,8 @@ document.addEventListener("DOMContentLoaded", () => {
       refreshDatasetListTauri(undefined, gameId);
     });
   }
+
+  getEl("btn-school-region-catcher")?.addEventListener("click", launchSchoolRegionCatcher);
+  getEl("btn-school-diagnostics")?.addEventListener("click", captureSchoolDiagnostics);
+  getEl("btn-school-dry-run")?.addEventListener("click", launchSchoolDryRunPreview);
 });

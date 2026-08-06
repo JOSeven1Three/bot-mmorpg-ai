@@ -28,6 +28,11 @@ profiles:
     status: "supported"
     path: "lost_ark/profile.yaml"
 
+  diablo_4:
+    name: "Diablo IV"
+    status: "experimental"
+    path: "diablo_4/profile.yaml"
+
   new_world:
     name: "New World"
     status: "supported"

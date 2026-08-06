@@ -6,6 +6,7 @@ Loads and manages game-specific configuration profiles.
 
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -69,6 +70,9 @@ class GameProfile:
 
     # Task configs
     tasks: Dict[str, TaskConfig]
+
+    # Optional companion tools such as external overlays.
+    external_overlays: Dict[str, Dict[str, Any]]
 
     # Source path
     profile_path: Optional[Path] = None
@@ -208,6 +212,51 @@ class GameProfileLoader:
 
         return profile
 
+    def load_raw_data(self, game_id: str) -> Dict[str, Any]:
+        """Load raw YAML data for a game profile."""
+        profile_path = self.profiles_dir / game_id / "profile.yaml"
+        if not profile_path.exists():
+            raise FileNotFoundError(f"Game profile not found: {profile_path}")
+
+        with open(profile_path, encoding="utf-8") as f:
+            return yaml.safe_load(f)
+
+    def save_display_regions(
+        self,
+        game_id: str,
+        important_regions: Dict[str, List[float]],
+        backup: bool = True,
+    ) -> Path:
+        """
+        Persist updated display regions back into the profile YAML.
+
+        Args:
+            game_id: Profile identifier
+            important_regions: Normalized [x, y, w, h] regions
+            backup: If True, create a one-time .bak file before first save
+
+        Returns:
+            Path to the written profile
+        """
+        profile_path = self.profiles_dir / game_id / "profile.yaml"
+        if not profile_path.exists():
+            raise FileNotFoundError(f"Game profile not found: {profile_path}")
+
+        data = self.load_raw_data(game_id)
+        data.setdefault("display", {})
+        data["display"]["important_regions"] = important_regions
+
+        if backup:
+            backup_path = profile_path.with_suffix(".yaml.bak")
+            if not backup_path.exists():
+                shutil.copyfile(profile_path, backup_path)
+
+        with open(profile_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, sort_keys=False, allow_unicode=False)
+
+        self._profiles_cache.pop(game_id, None)
+        return profile_path
+
     def _parse_profile(self, data: Dict, profile_path: Path) -> GameProfile:
         """Parse YAML data into a GameProfile object."""
         try:
@@ -241,6 +290,7 @@ class GameProfileLoader:
             display_data = data.get("display", {})
             input_data = data.get("input", {})
             training_data = data.get("training", {})
+            integrations_data = data.get("integrations", {})
 
             return GameProfile(
                 id=game_data.get("id", "unknown"),
@@ -271,6 +321,7 @@ class GameProfileLoader:
                 ),
                 hardware_tiers=hardware_tiers,
                 tasks=tasks,
+                external_overlays=integrations_data.get("external_overlays", {}),
                 profile_path=profile_path,
             )
 

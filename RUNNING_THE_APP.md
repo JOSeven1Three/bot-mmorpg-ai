@@ -1,13 +1,15 @@
 # Running BOT MMORPG AI - Complete Guide
 
 > **Windows 10/11 required.** The desktop UI requires [Rust](https://rustup.rs/) and the Tauri CLI (`cargo install tauri-cli`).
+>
+> **Windows note:** PowerShell usually does not include `make`. Use `.\scripts\windows_tasks.ps1` for the Windows-native commands in this guide. The wrapper also checks for both `cargo` and the Tauri CLI before trying to launch the desktop app.
 
 ## Quick Start
 
 ### 1. Install Dependencies
 
-```bash
-make install-all
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows_tasks.ps1 install-all
 ```
 
 This installs:
@@ -15,20 +17,20 @@ This installs:
 - Creates virtual environment
 - Installs all required packages
 
-> **Note:** A virtual environment (`.venv/`) is created automatically. You do NOT need to activate it manually - all `make` commands use it automatically.
+> **Note:** A virtual environment (`.venv/`) is created automatically. You do NOT need to activate it manually.
 
 ### 2. Run the Application
 
 **Requires:** Rust + Tauri CLI (for the desktop UI). If you only need the Python pipeline, skip to "Run Without Desktop UI" below.
 
-```bash
-make run
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows_tasks.ps1 run
 ```
 
 **OR** (same thing):
 
-```bash
-make dev
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows_tasks.ps1 dev
 ```
 
 This will:
@@ -54,8 +56,8 @@ npm error enoent Could not read package.json: Error: ENOENT: no such file or dir
 
 ### ✅ Correct Way
 
-```bash
-make run  # ✅ This is the correct way!
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows_tasks.ps1 run
 ```
 
 ---
@@ -142,14 +144,14 @@ Plain HTML/JS → Tauri → Done!
 ## Running Different Components
 
 ### Full Application (Recommended)
-```bash
-make run
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows_tasks.ps1 run
 ```
 Starts everything together.
 
 ### Backend Only (Testing)
-```bash
-make run-backend
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows_tasks.ps1 run-backend
 ```
 Runs just the Python backend server.
 
@@ -353,18 +355,18 @@ make test-installer
 
 | Command | Description |
 |---------|-------------|
-| `make help` | Show all available commands |
-| `make install-all` | Install all dependencies |
-| `make run` | Run the application (dev mode) |
-| `make dev` | Same as `make run` |
-| `make run-backend` | Run only backend (testing) |
-| `make collect-data` | Run data collection |
-| `make train-model` | Train AI model |
-| `make test-model` | Test trained model |
-| `make build-installer` | Build Windows installer |
-| `make verify-installer` | Verify installer build |
-| `make test-installer` | Test installer package |
-| `make clean` | Clean all build artifacts |
+| `.\scripts\windows_tasks.ps1 help` | Show Windows-native task commands |
+| `.\scripts\windows_tasks.ps1 install-all` | Install all dependencies |
+| `.\scripts\windows_tasks.ps1 run` | Run the application (dev mode) |
+| `.\scripts\windows_tasks.ps1 dev` | Same as `run` |
+| `.\scripts\windows_tasks.ps1 run-backend` | Run only backend (testing) |
+| `uv run python versions/0.01/1-collect_data.py` | Run data collection |
+| `uv run python versions/0.01/2-train_model.py` | Train AI model |
+| `uv run python versions/0.01/3-test_model.py` | Test trained model |
+| `.\scripts\windows_tasks.ps1 build-installer` | Build Windows installer |
+| `.\scripts\windows_tasks.ps1 verify-installer` | Verify installer build |
+| `.\scripts\windows_tasks.ps1 test-installer` | Test installer package |
+| `python -m compileall src backend modelhub launcher` | Quick syntax validation |
 
 ---
 

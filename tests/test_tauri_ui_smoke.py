@@ -20,8 +20,22 @@ class TestTauriUI(unittest.TestCase):
         if not UI_HTML.exists():
             self.skipTest("HTML not found")
         html = UI_HTML.read_text(encoding="utf-8", errors="replace")
-        for tab in ("dashboard", "teach", "train", "run", "strategist"):
+        for tab in ("dashboard", "teach", "train", "run", "strategist", "wizard"):
             self.assertIn(f'data-tab="{tab}"', html, f"Missing data-tab for {tab}")
+
+    def test_training_school_has_diablo_workflow_controls(self):
+        """Training School should expose Diablo IV workflow buttons."""
+        if not UI_HTML.exists():
+            self.skipTest("HTML not found")
+        html = UI_HTML.read_text(encoding="utf-8", errors="replace")
+        for needle in (
+            'id="btn-school-region-catcher"',
+            'id="btn-school-diagnostics"',
+            'id="btn-school-dry-run"',
+            'id="school-tools-status"',
+            "Diablo IV Desktop Workflow",
+        ):
+            self.assertIn(needle, html, f"Missing Training School control: {needle}")
 
     def test_main_js_no_tauri_imports(self):
         """Ensure we use window.__TAURI__ instead of node imports."""
@@ -39,6 +53,24 @@ class TestTauriUI(unittest.TestCase):
         js = UI_JS.read_text(encoding="utf-8", errors="replace")
         # Check for standard event attachment
         self.assertIn("addEventListener", js, "main.js missing addEventListener logic")
+
+    def test_main_js_wires_training_school_actions(self):
+        """Training School controls should be wired to the new workflow actions."""
+        if not UI_JS.exists():
+            self.skipTest("JS not found")
+        js = UI_JS.read_text(encoding="utf-8", errors="replace")
+        for needle in (
+            "launchSchoolRegionCatcher",
+            "captureSchoolDiagnostics",
+            "launchSchoolDryRunPreview",
+            'btn-school-region-catcher',
+            'btn-school-diagnostics',
+            'btn-school-dry-run',
+            "training_launch_region_catcher",
+            "training_capture_profile_diagnostics",
+            "inference_launch_dry_run_preview",
+        ):
+            self.assertIn(needle, js, f"Missing Training School JS wiring: {needle}")
 
     def test_nsis_template_uses_canonical_define_pattern(self):
         """Ensure NSIS template uses the canonical Tauri 1.6 !define pattern.

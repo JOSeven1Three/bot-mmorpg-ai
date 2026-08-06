@@ -81,6 +81,24 @@ class TestGameProfileLoader:
         assert profile.id == "guild_wars_2"
         assert profile.name == "Guild Wars 2"
 
+    def test_load_diablo_4_profile(self):
+        """Test loading Diablo IV profile."""
+        from bot_mmorpg.config import GameProfileLoader
+
+        loader = GameProfileLoader()
+        profile = loader.load("diablo_4")
+
+        assert profile.id == "diablo_4"
+        assert profile.name == "Diablo IV"
+        assert profile.requires_mouse is True
+        assert "combat" in profile.list_tasks()
+        assert "loot_collection" in profile.list_tasks()
+        assert "helltides" in profile.external_overlays
+        assert (
+            profile.external_overlays["helltides"]["project_path"]
+            == "C:/Users/Jose/HermesOS/Projects/Diablo4 Helltides overlay"
+        )
+
     def test_load_nonexistent_profile(self):
         """Test loading nonexistent profile raises error."""
         from bot_mmorpg.config import GameProfileLoader

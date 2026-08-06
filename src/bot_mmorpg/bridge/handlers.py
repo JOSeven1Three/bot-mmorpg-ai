@@ -7,6 +7,9 @@ Handles all commands from Tauri frontend.
 import base64
 import io
 import logging
+import os
+import subprocess
+import sys
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -113,6 +116,7 @@ class CommandHandler:
         # Caches
         self._hardware_info = None
         self._game_profiles = None
+        self._workflow_processes: Dict[str, subprocess.Popen] = {}
 
     def set_event_emitter(self, emitter):
         """Set the event emitter for real-time updates."""
@@ -133,6 +137,51 @@ class CommandHandler:
 
         if self._inference_thread and self._inference_thread.is_alive():
             self._inference_thread.join(timeout=5)
+
+        for process in self._workflow_processes.values():
+            try:
+                if process.poll() is None:
+                    process.terminate()
+            except Exception:
+                logger.debug("Workflow process cleanup failed", exc_info=True)
+
+    def _script_path(self, name: str) -> Path:
+        return Path(__file__).resolve().parents[1] / "scripts" / name
+
+    def _parse_capture_region(
+        self, capture_region: Optional[List[int]], fallback_resolution: List[int]
+    ) -> tuple[int, int, int, int]:
+        if capture_region and len(capture_region) == 4:
+            return tuple(int(v) for v in capture_region)
+        return (0, 0, int(fallback_resolution[0]), int(fallback_resolution[1]))
+
+    def _launch_workflow_process(
+        self, process_key: str, args: List[str], cwd: Optional[Path] = None
+    ) -> Dict[str, Any]:
+        previous = self._workflow_processes.get(process_key)
+        if previous and previous.poll() is None:
+            return {
+                "status": "already_running",
+                "pid": previous.pid,
+                "command": args,
+            }
+
+        kwargs: Dict[str, Any] = {
+            "args": args,
+            "cwd": str(cwd or Path(args[1]).resolve().parents[2]),
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+        process = subprocess.Popen(**kwargs)
+        self._workflow_processes[process_key] = process
+        return {
+            "status": "started",
+            "pid": process.pid,
+            "command": args,
+        }
 
     # =========================================================================
     # CONFIG COMMANDS
@@ -198,6 +247,7 @@ class CommandHandler:
             ],
             "recommended_architecture": profile.recommended_architecture,
             "minimum_samples": profile.minimum_samples,
+            "external_overlays": profile.external_overlays,
             "hardware_tiers": {
                 tier: {
                     "architecture": cfg.architecture,
@@ -338,6 +388,99 @@ class CommandHandler:
         """Get current training state."""
         return asdict(self.training_state)
 
+    def handle_training_launch_region_catcher(
+        self,
+        game_id: str = "diablo_4",
+        capture_region: Optional[List[int]] = None,
+        screenshot_path: Optional[str] = None,
+        roi_overrides_path: Optional[str] = None,
+        no_autosave: bool = False,
+    ) -> Dict[str, Any]:
+        """Launch the interactive Region Catcher for HUD calibration."""
+        from bot_mmorpg.config import GameProfileLoader
+
+        profile = GameProfileLoader().load(game_id)
+        resolved_region = self._parse_capture_region(
+            capture_region, profile.typical_resolution
+        )
+        script = self._script_path("region_catcher.py")
+        args = [
+            sys.executable,
+            str(script),
+            "--game",
+            game_id,
+            "--region",
+            ",".join(str(v) for v in resolved_region),
+        ]
+        if screenshot_path:
+            args.extend(["--screenshot", screenshot_path])
+        if roi_overrides_path:
+            args.extend(["--roi-overrides", roi_overrides_path])
+        if no_autosave:
+            args.append("--no-autosave")
+
+        result = self._launch_workflow_process(f"region_catcher:{game_id}", args)
+        result.update(
+            {
+                "game_id": game_id,
+                "capture_region": list(resolved_region),
+                "screen_only": True,
+                "writes_profile": True,
+                "tool": "region_catcher",
+            }
+        )
+        return result
+
+    def handle_training_capture_profile_diagnostics(
+        self,
+        game_id: str = "diablo_4",
+        capture_region: Optional[List[int]] = None,
+        output_dir: Optional[str] = None,
+        roi_overrides_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Capture one annotated profile-diagnostics bundle."""
+        from bot_mmorpg.config import GameProfileLoader
+        from bot_mmorpg.scripts.collect_data import (
+            load_roi_overrides,
+            save_profile_diagnostics,
+        )
+        from bot_mmorpg.scripts.grabscreen import grab_screen
+
+        loader = GameProfileLoader()
+        profile = loader.load(game_id)
+        resolved_region = self._parse_capture_region(
+            capture_region, profile.typical_resolution
+        )
+        important_regions = profile.important_regions
+        if roi_overrides_path:
+            important_regions = load_roi_overrides(
+                Path(roi_overrides_path), resolved_region, important_regions
+            )
+
+        screen = grab_screen(region=resolved_region)
+        if screen is None or getattr(screen, "size", 0) == 0:
+            raise RuntimeError("Screen capture returned empty image")
+
+        root = Path(output_dir) if output_dir else Path("artifacts")
+        diag_dir = save_profile_diagnostics(
+            screen,
+            profile,
+            resolved_region,
+            root,
+            important_regions=important_regions,
+        )
+        return {
+            "status": "saved",
+            "game_id": game_id,
+            "capture_region": list(resolved_region),
+            "screen_only": True,
+            "diagnostics_dir": str(diag_dir),
+            "raw_image": str(diag_dir / "raw.png"),
+            "annotated_image": str(diag_dir / "annotated_regions.png"),
+            "metadata_path": str(diag_dir / "metadata.json"),
+            "roi_template_path": str(diag_dir / "roi_overrides.template.json"),
+        }
+
     # =========================================================================
     # INFERENCE COMMANDS
     # =========================================================================
@@ -437,6 +580,52 @@ class CommandHandler:
     def handle_inference_get_state(self) -> Dict[str, Any]:
         """Get current inference state."""
         return asdict(self.inference_state)
+
+    def handle_inference_launch_dry_run_preview(
+        self,
+        model_path: str,
+        max_frames: int = 120,
+        width: int = 1920,
+        height: int = 1080,
+        cpu: bool = False,
+        verbose: bool = False,
+    ) -> Dict[str, Any]:
+        """Launch capped dry-run inference preview with no game input."""
+        capped_frames = max(1, min(int(max_frames), 300))
+        script = self._script_path("test_model.py")
+        args = [
+            sys.executable,
+            str(script),
+            "--model",
+            model_path,
+            "--dry-run",
+            "--no-gamepad",
+            "--max-frames",
+            str(capped_frames),
+            "--width",
+            str(int(width)),
+            "--height",
+            str(int(height)),
+        ]
+        if cpu:
+            args.append("--cpu")
+        if verbose:
+            args.append("--verbose")
+
+        result = self._launch_workflow_process(
+            f"dry_run_preview:{Path(model_path).resolve()}",
+            args,
+        )
+        result.update(
+            {
+                "model_path": model_path,
+                "dry_run": True,
+                "screen_only": True,
+                "sends_input": False,
+                "max_frames": capped_frames,
+            }
+        )
+        return result
 
     # =========================================================================
     # VISUALIZATION COMMANDS

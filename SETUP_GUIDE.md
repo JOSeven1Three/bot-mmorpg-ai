@@ -12,7 +12,7 @@ make: *** [Makefile:187: run] Error 1
 
 **Root Cause:** Rust/Cargo is not installed on your system.
 
-**Solution:** Install Rust before running the application.
+**Solution:** Install Rust before running the application. On Windows PowerShell, use `.\scripts\windows_tasks.ps1 run` instead of depending on `make`.
 
 ---
 
@@ -25,7 +25,7 @@ npm error enoent Could not read package.json
 
 **Root Cause:** This is **NOT a Node.js project**. There is no `frontend/` directory with npm.
 
-**Solution:** Use `make run` instead (after installing Rust).
+**Solution:** Use `.\scripts\windows_tasks.ps1 run` instead (after installing Rust).
 
 ---
 
@@ -79,14 +79,23 @@ winget install Rustlang.Rustup
 - Close and reopen your terminal
 - Verify: `cargo --version`
 
+#### 2b. Tauri CLI âŒ (Also required for the desktop app)
+
+```powershell
+cargo install tauri-cli
+cargo tauri --version
+```
+
+If `cargo` works but `cargo tauri --version` fails, the desktop UI still will not start.
+
 #### 3. uv (Python package manager) ⚠️ (Optional but recommended)
 
 ```powershell
 # Install via pip
 python -m pip install uv
 
-# Or let the Makefile install it
-make install-uv
+# Or install dependencies through the Windows task wrapper
+powershell -ExecutionPolicy Bypass -File .\scripts\windows_tasks.ps1 install-all
 ```
 
 ---
@@ -109,7 +118,7 @@ rustc --version
 
 ```powershell
 # From project root
-make install-all
+powershell -ExecutionPolicy Bypass -File .\scripts\windows_tasks.ps1 install-all
 ```
 
 This will:
@@ -120,7 +129,7 @@ This will:
 ### Step 3: Run the Application
 
 ```powershell
-make run
+powershell -ExecutionPolicy Bypass -File .\scripts\windows_tasks.ps1 run
 ```
 
 This will:
@@ -144,7 +153,7 @@ BOT MMORPG AI
 ```
 
 **Tauri** is written in Rust, so you need Rust/Cargo to:
-- Run development server (`make run`)
+- Run development server (`.\scripts\windows_tasks.ps1 run`)
 - Build the application
 - Create installers
 
