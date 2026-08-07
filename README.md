@@ -1,5 +1,9 @@
 # BOT-MMORPG-AI
 
+> Personal continuation repo: `https://github.com/JOSeven1Three/bot-mmorpg-ai`
+>
+> Upstream source repo remains available separately. Use the personal repo above when you want your latest working state on a new computer.
+
 <div align="center">
 
 ![Bot MMORPG AI](./assets/images/posts/README/genshin-impact.jpg)
