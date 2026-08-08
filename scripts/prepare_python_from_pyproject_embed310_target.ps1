@@ -401,8 +401,13 @@ Ok "Installation complete (All modules forced)."
 # 8. Final Sanity Check
 # -------------------------
 Info "Verifying environment..."
-& $pyExe -c "import numpy; import mss; import cv2; import eel; import torch; print('SUCCESS: Portable environment is operational.')"
-if ($LASTEXITCODE -ne 0) { Fail "Environment verification failed. Missing 'mss' or other modules." }
+$sanityImports = @("import numpy", "import mss", "import cv2", "import eel")
+if ($Extras -contains "ml") {
+    $sanityImports += "import torch"
+}
+$sanityCode = ($sanityImports -join "; ") + "; print('SUCCESS: Portable environment is operational.')"
+& $pyExe -c $sanityCode
+if ($LASTEXITCODE -ne 0) { Fail "Environment verification failed. A required bundled module is missing." }
 
 Ok "========================================================="
 Ok " PREPARE SCRIPT COMPLETED SUCCESSFULLY"
