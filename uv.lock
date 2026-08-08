@@ -617,13 +617,6 @@ dependencies = [
     { name = "pynput" },
     { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "pyyaml" },
-    { name = "timm" },
-    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
-    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
-    { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
-    { name = "torchvision", version = "0.20.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
-    { name = "torchvision", version = "0.23.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
-    { name = "torchvision", version = "0.25.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
 ]
 
 [package.optional-dependencies]
@@ -782,11 +775,8 @@ requires-dist = [
     { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = ">=1.0.0,<3.0.0" },
     { name = "tensorflow", marker = "extra == 'ml-legacy'", specifier = "==2.11.1" },
     { name = "tflearn", marker = "extra == 'ml-legacy'", specifier = ">=0.5.0" },
-    { name = "timm", specifier = ">=0.9.0,<2.0.0" },
     { name = "timm", marker = "extra == 'ml'", specifier = ">=0.9.0,<2.0.0" },
-    { name = "torch", specifier = ">=2.0.0,<3.0.0" },
     { name = "torch", marker = "extra == 'ml'", specifier = ">=2.0.0,<3.0.0" },
-    { name = "torchvision", specifier = ">=0.15.0,<1.0.0" },
     { name = "torchvision", marker = "extra == 'ml'", specifier = ">=0.15.0,<1.0.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'backend'", specifier = ">=0.27,<1.0" },
 ]
