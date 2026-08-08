@@ -50,10 +50,9 @@ dependencies = [
     "pywin32>=300; platform_system=='Windows'",
     "pynput>=1.7.0,<2.0.0",
     "mss>=6.1.0,<10.0.0",
-    # ML dependencies (PyTorch 2.x) - required for all ML features
-    "torch>=2.0.0,<3.0.0",
-    "torchvision>=0.15.0,<1.0.0",
-    "timm>=0.9.0,<2.0.0",
+    # The optional ML engine (torch/torchvision/timm) is deliberately not a
+    # base dependency. The desktop installer stays lightweight and installs it
+    # on demand from the separately released ml-engine.zip asset.
 ]
 
 [project.optional-dependencies]

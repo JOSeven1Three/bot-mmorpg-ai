@@ -120,6 +120,18 @@ jobs:
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_pipeline.ps1 -Version "$env:BOT_BUILD_SEMVER"
 
+      - name: Build and verify optional ML engine asset
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package_ml_addon.ps1
+          $asset = "dist/ml-engine.zip"
+          if (-not (Test-Path $asset)) { throw "ML engine asset was not created: $asset" }
+          $probe = Join-Path $env:RUNNER_TEMP "ml-engine-probe"
+          Expand-Archive -LiteralPath $asset -DestinationPath $probe -Force
+          if (-not (Test-Path (Join-Path $probe "torch")) -or -not (Test-Path (Join-Path $probe "torchvision")) -or -not (Test-Path (Join-Path $probe "timm"))) {
+            throw "ML engine asset is missing torch, torchvision, or timm"
+          }
+
       - name: Verify installer contents
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify_installer.ps1
@@ -150,7 +162,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer-${{ steps.ver.outputs.semver }}
-          path: ${{ steps.installer.outputs.path }}
+          path: |
+            ${{ steps.installer.outputs.path }}
+            dist/ml-engine.zip
           retention-days: 30
 
       # Nightly: auto-publish EXE to a rolling "nightly" release on every master push.
@@ -179,7 +193,9 @@ jobs:
 
             > **Note:** Nightly builds may contain experimental features.
             > For stable releases, see [tagged releases](../../releases).
-          files: ${{ steps.installer.outputs.path }}
+          files: |
+            ${{ steps.installer.outputs.path }}
+            dist/ml-engine.zip
 
   test-installer:
     name: Test Installer

@@ -196,6 +196,18 @@ jobs:
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_pipeline.ps1 -Version "$env:BOT_RELEASE_SEMVER"
 
+      - name: Build and verify optional ML engine asset
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package_ml_addon.ps1
+          $asset = "dist/ml-engine.zip"
+          if (-not (Test-Path $asset)) { throw "ML engine asset was not created: $asset" }
+          $probe = Join-Path $env:RUNNER_TEMP "ml-engine-probe"
+          Expand-Archive -LiteralPath $asset -DestinationPath $probe -Force
+          if (-not (Test-Path (Join-Path $probe "torch")) -or -not (Test-Path (Join-Path $probe "torchvision")) -or -not (Test-Path (Join-Path $probe "timm"))) {
+            throw "ML engine asset is missing torch, torchvision, or timm"
+          }
+
       # Post-build verification. Fails the release if resources/python,
       # resources/backend, resources/modelhub, or resources/versions are
       # missing -- the root cause of issues #26, #37, #42 on v0.1.8/v0.2.0.
@@ -239,7 +251,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.create-release.outputs.version }}
-          files: ${{ steps.installer.outputs.path }}
+          files: |
+            ${{ steps.installer.outputs.path }}
+            dist/ml-engine.zip
           fail_on_unmatched_files: true
 
       # Optional: keep an Actions artifact too (Actions will show it as a zip; Release will have the EXE)
@@ -247,5 +261,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer-${{ needs.create-release.outputs.version }}
-          path: ${{ steps.installer.outputs.path }}
+          path: |
+            ${{ steps.installer.outputs.path }}
+            dist/ml-engine.zip
           retention-days: 90

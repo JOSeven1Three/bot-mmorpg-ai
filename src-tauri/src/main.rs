@@ -27,6 +27,10 @@ const DEFAULT_VERSION: &str = "0.01";
 // Embeddable Python often cannot create venv ("No module named venv").
 // So production uses a portable --target directory and adjusts python*. _pth to include it.
 const PROD_EXTRAS: &str = "launcher,backend"; // exclude ml here; install ML later on-demand
+/// Release asset built by scripts/package_ml_addon.ps1. Keep this name stable so
+/// clients can always use GitHub's latest-release download endpoint.
+const ML_ENGINE_DOWNLOAD_URL: &str =
+    "https://github.com/JOSeven1Three/bot-mmorpg-ai/releases/latest/download/ml-engine.zip";
 
 // ---------------------------
 // APP STATE
@@ -3787,6 +3791,107 @@ async fn start_recording(
     Ok(format!("Started collect_data job {}", job_id))
 }
 
+/// Return whether the optional ML engine is installed in the managed runtime.
+/// Checking for both packages prevents a partially extracted archive from being
+/// reported as usable after an interrupted download.
+#[tauri::command]
+fn check_ml_status(app: AppHandle) -> bool {
+    let site_packages = managed_site_packages_dir(&app);
+    site_packages.join("torch").is_dir()
+        && site_packages.join("torchvision").is_dir()
+        && site_packages.join("timm").is_dir()
+}
+
+fn emit_ml_download_progress(window: &Window, phase: &str, message: &str) {
+    let _ = window.emit(
+        "download_progress",
+        json!({ "phase": phase, "message": message }),
+    );
+}
+
+/// Download and safely unpack the optional ML engine into the per-user Python
+/// runtime. The archive is a release artifact, never an arbitrary UI-supplied
+/// URL, and `enclosed_name` rejects zip-slip paths before any file is written.
+#[tauri::command]
+async fn install_ml_engine(app: AppHandle, window: Window) -> Result<String, String> {
+    if check_ml_status(app.clone()) {
+        return Ok("AI Engine is already installed.".to_string());
+    }
+
+    let target_dir = managed_site_packages_dir(&app);
+    fs::create_dir_all(&target_dir)
+        .map_err(|e| format!("Cannot create ML engine directory: {}", e))?;
+
+    emit_ml_download_progress(&window, "downloading", "Downloading AI Engine. This may take a few minutes...");
+    let response = reqwest::get(ML_ENGINE_DOWNLOAD_URL)
+        .await
+        .map_err(|e| format!("Could not download AI Engine: {}", e))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Could not download AI Engine: release server returned {}. Ask the release owner to publish ml-engine.zip.",
+            response.status()
+        ));
+    }
+    let archive_bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Could not read AI Engine download: {}", e))?;
+    if archive_bytes.is_empty() {
+        return Err("AI Engine download was empty.".to_string());
+    }
+
+    emit_ml_download_progress(&window, "extracting", "Extracting AI Engine...");
+    let staging_dir = managed_python_root(&app).join("ml-engine-staging");
+    let _ = fs::remove_dir_all(&staging_dir);
+    fs::create_dir_all(&staging_dir).map_err(|e| format!("Cannot prepare AI Engine: {}", e))?;
+
+    let result = (|| -> Result<(), String> {
+        use std::io::{Cursor, Read, Write};
+        let mut archive = zip::ZipArchive::new(Cursor::new(archive_bytes))
+            .map_err(|e| format!("AI Engine archive is invalid: {}", e))?;
+        for index in 0..archive.len() {
+            let mut entry = archive
+                .by_index(index)
+                .map_err(|e| format!("Cannot read AI Engine archive entry: {}", e))?;
+            let relative = entry.enclosed_name().ok_or_else(|| {
+                format!("AI Engine archive contains an unsafe path: {}", entry.name())
+            })?.to_path_buf();
+            let output = staging_dir.join(relative);
+            if entry.is_dir() {
+                fs::create_dir_all(&output).map_err(|e| e.to_string())?;
+                continue;
+            }
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let mut out = fs::File::create(&output).map_err(|e| e.to_string())?;
+            let mut buffer = [0u8; 64 * 1024];
+            loop {
+                let read = entry.read(&mut buffer).map_err(|e| e.to_string())?;
+                if read == 0 { break; }
+                out.write_all(&buffer[..read]).map_err(|e| e.to_string())?;
+            }
+        }
+        if !staging_dir.join("torch").is_dir()
+            || !staging_dir.join("torchvision").is_dir()
+            || !staging_dir.join("timm").is_dir()
+        {
+            return Err("AI Engine archive is missing torch, torchvision, or timm.".to_string());
+        }
+        copy_dir_all(&staging_dir, &target_dir)
+            .map_err(|e| format!("Could not install AI Engine: {}", e))?;
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&staging_dir);
+    result?;
+
+    if !check_ml_status(app) {
+        return Err("AI Engine installation did not complete successfully.".to_string());
+    }
+    emit_ml_download_progress(&window, "ready", "AI Engine is ready.");
+    Ok("AI Engine installed successfully.".to_string())
+}
+
 #[tauri::command]
 async fn start_training(
     state: tauri::State<'_, AppState>,
@@ -6657,6 +6762,8 @@ fn main() {
             save_configuration,
             ai_chat,
             start_recording,
+            check_ml_status,
+            install_ml_engine,
             start_training,
             start_bot,
             stop_process,

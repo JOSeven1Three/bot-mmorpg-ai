@@ -1728,6 +1728,38 @@ window.toggleRecord = async function (btn) {
   }
 };
 
+// Optional ML engine gate shared by training and bot inference. The light
+// installer deliberately omits PyTorch; this keeps the first ML action clear
+// and lets the user decline the download without starting a doomed job.
+let mlEngineInstallPromise = null;
+async function ensureMlEngine(actionLabel) {
+  if (!invoke) return false;
+  try {
+    if (await invoke("check_ml_status")) return true;
+    const approved = window.confirm(
+      `The AI Engine is required to ${actionLabel}. Download and install it now?\n\n` +
+      "This is a one-time download and may take a few minutes."
+    );
+    if (!approved) {
+      logToTerminal("AI Engine download was declined.", "warning");
+      return false;
+    }
+    if (!mlEngineInstallPromise) {
+      mlEngineInstallPromise = invoke("install_ml_engine");
+    }
+    const result = await mlEngineInstallPromise;
+    logToTerminal(String(result), "success");
+    window.notifySuccess?.("AI Engine ready", "You can now train or run the bot.");
+    return true;
+  } catch (err) {
+    logToTerminal(`AI Engine installation failed: ${err}`, "error");
+    window.notifyError?.("AI Engine installation failed", String(err));
+    return false;
+  } finally {
+    mlEngineInstallPromise = null;
+  }
+}
+
 // TRAIN: Start Training
 window.startTraining = async function () {
   if (!invoke) return alert("Tauri backend not found.");
@@ -1741,6 +1773,11 @@ window.startTraining = async function () {
     if (btn) btn.disabled = true;
     if (progressBar) progressBar.style.width = "0%";
     if (pctDisplay) pctDisplay.textContent = "0%";
+
+    if (!await ensureMlEngine("train a model")) {
+      _refreshTrainGate();
+      return;
+    }
 
     const dsSel = getEl("train-dataset-id");
     const dsValue = dsSel ? (dsSel.value || "") : "";
@@ -1883,6 +1920,11 @@ window.toggleBot = async function (btn) {
     try {
       logToTerminal("Initializing autonomous bot...", "info");
       btn.disabled = true;
+      if (!await ensureMlEngine("run the bot")) {
+        isBotRunning = false;
+        _setRunBotRunning(false);
+        return;
+      }
       // start_bot now requires game_id so the Rust side can resolve the
       // active model from /modelhub/catalog?game_id=... If the user
       // hasn't picked a model the Rust command returns a clear error
@@ -2026,6 +2068,12 @@ async function wireBackendEvents() {
   await listen("terminal_update", (event) => {
     const line = typeof event.payload === "string" ? event.payload : JSON.stringify(event.payload);
     window.update_terminal(line);
+  });
+
+  await listen("download_progress", (event) => {
+    const progress = event.payload || {};
+    const message = typeof progress === "string" ? progress : progress.message;
+    if (message) logToTerminal(`[AI Engine] ${message}`, "info");
   });
 
   // Replay any terminal_update lines that Rust emitted DURING setup()

@@ -8,7 +8,7 @@ eliminating the need for PyInstaller and reducing installer size by ~500MB.
 Steps:
 1) Build wheelhouse + lock for OFFLINE installs
 2) Bundle embeddable Python into src-tauri/resources/python/
-3) Pre-install ALL Python deps (including PyTorch) into site-packages
+3) Pre-install bundled Python deps for the lightweight installer into site-packages
 4) UI Smoke Tests
 5) Copy driver installers + scripts
 6) Bundle versions folder
@@ -518,7 +518,7 @@ function Ensure-BundledSitePackages {
   #
   # Choose the same spec you used when building wheelhouse. If you already have a wheel for your project in wheelhouse,
   # pip will pick it from --find-links.
-  $projectSpec = "bot-mmorpg-ai[launcher,backend,ml]"
+  $projectSpec = "bot-mmorpg-ai[launcher,backend]"
 
   Log-Info "Installing project spec into bundled site-packages (offline): $projectSpec"
 
@@ -547,11 +547,11 @@ function Ensure-BundledSitePackages {
     "-c","import sys; import numpy; print('numpy_ok'); print('python_ok', sys.version)"
   ) -ErrorMessage "Bundled python cannot import numpy from site-packages"
 
-  # PyTorch smoke test (required for ML features)
-  Log-Info "Smoke test: PyTorch import..."
+  # Keep the light installer focused on launcher/backend runtime imports.
+  Log-Info "Smoke test: backend runtime imports..."
   Invoke-Checked -FilePath $pyExe -Arguments @(
-    "-c","import torch; print('torch_ok', torch.__version__)"
-  ) -ErrorMessage "Bundled python cannot import torch (PyTorch)"
+    "-c","import fastapi, uvicorn, cv2, numpy; print('backend_runtime_ok')"
+  ) -ErrorMessage "Bundled python cannot import backend runtime dependencies"
 
   # Optional: tensorflow import only if installed (ml-legacy)
   $tfMarker1 = Join-Path $sitePkgs "tensorflow"
@@ -583,8 +583,8 @@ function Ensure-BundledSitePackages {
   #     point lookup require these. Removing them broke uvicorn's
   #     cli on at least one wheel layout (issue not in tracker
   #     because the symptom was just "uvicorn entry point missing").
-  #   - test/, testing/ -- already shown to be runtime-required
-  #     submodules of torch/numpy in Bug #9 (the 0.0.0-dev crash).
+  #   - testing/       -- numpy.testing is importable at runtime and
+  #     has already been observed as a transitive dependency path.
   #
   # If file size becomes a concern again, the right fix is to
   # upgrade the zip compressor from DEFLATE to LZMA2 (~30% smaller
@@ -620,9 +620,7 @@ function Ensure-BundledSitePackages {
   # corresponding `import x.y` line here.
   Log-Info "Runtime integrity check: validating bundled runtime survived all strip steps..."
   $integrityTests = @(
-    @{ Stmt = "import torch, torch.testing, torch.nn, torch.fx"; Why = "torch.testing was deleted by '^(tests?|testing)$' prune in 0.0.0-dev (Bug #9)" }
-    @{ Stmt = "import torchvision";                              Why = "torchvision required for ML training pipeline" }
-    @{ Stmt = "import numpy, numpy.testing";                     Why = "numpy.testing imported transitively by torch on some platforms" }
+    @{ Stmt = "import numpy, numpy.testing";                     Why = "numpy.testing is a runtime dependency path for bundled scientific packages" }
     @{ Stmt = "import fastapi, uvicorn";                         Why = "FastAPI sidecar startup requirement" }
     @{ Stmt = "import cv2";                                      Why = "OpenCV used by collect_data + training preprocessing" }
     @{ Stmt = "import importlib.metadata as m; assert m.version('uvicorn'); assert m.version('fastapi')"; Why = "*.dist-info presence (importlib.metadata + entry-point lookup needs them)" }
@@ -739,7 +737,7 @@ Log-Step 1 "Preparing wheelhouse (cp310 win_amd64)"
 
 # Run the prepare script to populate wheels
 & (Join-Path $root "scripts\prepare_python_from_pyproject_embed310_target.ps1") `
-  -Extras @("launcher","backend","ml") `
+  -Extras @("launcher","backend") `
   -TargetTag "win_amd64_cp310" `
   -RebuildTarget
 if ($LASTEXITCODE -ne 0) { exit 1 }
@@ -791,7 +789,7 @@ try {
 }
 
 # ================================
-# STEP 3: Pre-bundle ALL python deps into site-packages (includes PyTorch)
+# STEP 3: Pre-bundle lightweight installer deps into site-packages
 # ================================
 try {
   Ensure-BundledSitePackages -RootDir $root

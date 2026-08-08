@@ -20,21 +20,23 @@ To avoid Windows Installer size limits (NSIS 2GB crash) and improve update speed
 3.  **Release:**
     * Upload `setup.exe` to users.
     * Upload `ml-engine.zip` to your hosting provider.
-    * Update the `install_ml_engine` URL in `src-tauri/src/main.rs` if the link changes.
+    * Publish the asset with the exact name `ml-engine.zip`. The desktop app
+      downloads it from the continuation repository's `latest/download` URL.
 ### Phase 1: Modify the Build Pipeline (The "Light" Installer)
 
 We first instruct your existing build script to **ignore** the heavy ML libraries.
 
-**Action:** Open `scripts/build_pipeline.ps1`.
-Find **Step 1** (around line ~350) and remove `"ml"` from the `-Extras` list.
+**Status:** Implemented in `scripts/build_pipeline.ps1` and `pyproject.toml`.
+PyTorch, torchvision, and timm are optional ML dependencies, so they cannot
+leak into the base project dependency list or the light installer will still
+bundle them.
 
 ```powershell
 # scripts/build_pipeline.ps1
 
 # ... inside Step 1 ...
-# CHANGE THIS LINE: Remove "ml"
 & (Join-Path $root "scripts\prepare_python_from_pyproject_embed310_target.ps1") `
-  -Extras @("launcher","backend") `  <-- "ml" IS GONE. Installer is now ~300MB.
+  -Extras @("launcher","backend") `
   -TargetTag "win_amd64_cp310" `
   -RebuildTarget
 
@@ -48,7 +50,7 @@ Find **Step 1** (around line ~350) and remove `"ml"` from the `-Extras` list.
 
 We need a new script to build the "Add-on" zip file containing just the heavy stuff.
 
-**Action:** Create a new file `scripts/package_ml_addon.ps1`.
+**Status:** Implemented in `scripts/package_ml_addon.ps1`.
 
 ```powershell
 <#
@@ -70,14 +72,17 @@ New-Item -ItemType Directory -Force -Path $mlStaging | Out-Null
 # 2. Use the existing build venv to drive pip
 $py = Join-Path $root ".venv\Scripts\python.exe"
 
-# 3. Install ONLY the ML extras into the staging folder
-# We use --no-deps so we don't re-bundle numpy/pandas (which are already in the main app)
-# NOTE: PyTorch is much smaller than TensorFlow (~200MB vs ~600MB)
+# 3. Install the ML engine packages and their required transitive dependencies.
+# The production script constrains shared libraries to the light installer's
+# supported version ranges before packaging the archive.
 Write-Host "Installing ML libs..."
-& $py -m pip install ".[ml]" --target $mlStaging --no-deps
+& $py -m pip install `
+  "torch>=2.0.0,<3.0.0" `
+  "torchvision>=0.15.0,<1.0.0" `
+  "timm>=0.9.0,<2.0.0" `
+  --target $mlStaging
 
-# 4. Clean up junk (dist-info, __pycache__) to save space
-Get-ChildItem $mlStaging -Filter "*.dist-info" -Recurse | Remove-Item -Recurse -Force
+# 4. Clean up cache only. Keep dist-info because runtime extensions can consult it.
 Get-ChildItem $mlStaging -Filter "__pycache__" -Recurse | Remove-Item -Recurse -Force
 
 # 5. Zip it up
@@ -90,7 +95,8 @@ Write-Host "SUCCESS: ML Add-on created at $mlZip" -ForegroundColor Green
 
 **Workflow:**
 
-1. Run `.\scripts\package_ml_addon.ps1`.
+1. Run `.\scripts\package_ml_addon.ps1` from the CPython 3.10 build venv
+   (the script refuses any other ABI).
 2. It creates `dist/ml-engine.zip` (~1GB).
 3. **Upload this zip** to your release server (e.g., GitHub Releases, AWS S3, or your VPS).
 
@@ -129,7 +135,7 @@ fn check_ml_status(app: AppHandle) -> bool {
 #[tauri::command]
 async fn install_ml_engine(app: AppHandle, window: Window) -> Result<String, String> {
     // REPLACE THIS WITH YOUR REAL URL
-    let url = "https://github.com/ruslanmv/BOT-MMORPG-AI/releases/download/v1.0.0/ml-engine.zip";
+    let url = "https://github.com/JOSeven1Three/bot-mmorpg-ai/releases/latest/download/ml-engine.zip";
     let target_dir = managed_site_packages_dir(&app);
 
     window.emit("download_progress", "Downloading AI Engine (approx 200MB)...").unwrap();
