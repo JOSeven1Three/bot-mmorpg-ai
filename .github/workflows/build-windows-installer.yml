@@ -8,9 +8,9 @@ name: Build Windows Installer
 # asset stream avoids that duplication.
 on:
   push:
-    branches: [ master, develop ]
+    branches: [ master, develop, jose-main ]
   pull_request:
-    branches: [ master, develop ]
+    branches: [ master, develop, jose-main ]
   workflow_dispatch:
 
 permissions:
