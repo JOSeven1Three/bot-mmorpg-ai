@@ -64,6 +64,15 @@ dev = [
     "mypy>=0.950,<1.15.0",
     "isort>=5.10.0,<6.0.0",
     "pylint>=2.13.0,<4.0.0",
+    # starlette's TestClient (used by tests/test_jobs_routes.py) requires
+    # httpx2 once starlette >= 1.0 is resolved -- an unpinned
+    # "fastapi>=0.110,<1.0" can legally resolve to a starlette major that
+    # needs it. Without this, `pip install -e ".[dev,backend]"` collects
+    # fine but tests/test_jobs_routes.py fails at collection with
+    # "RuntimeError: The starlette.testclient module requires the httpx2
+    # package". httpx (1.x) still works for starlette < 1.0.
+    "httpx>=0.23.0",
+    "httpx2",
 ]
 
 docs = [
@@ -130,6 +139,12 @@ bot-mmorpg-inspect = "bot_mmorpg.scripts.inspect_dataset:main"
 bot-mmorpg-train = "bot_mmorpg.scripts.train_model:main"
 bot-mmorpg-play = "bot_mmorpg.scripts.test_model:main"
 bot-mmorpg-region-catcher = "bot_mmorpg.scripts.region_catcher:main"
+bot-mmorpg-evaluate = "bot_mmorpg.scripts.evaluate_model:main"
+bot-mmorpg-offline-fixture = "bot_mmorpg.scripts.offline_control_fixture:main"
+bot-mmorpg-new-profile = "bot_mmorpg.scripts.new_game_profile:main"
+bot-mmorpg-generate-fixture = "bot_mmorpg.scripts.generate_fixture_dataset:main"
+bot-mmorpg-replay = "bot_mmorpg.scripts.replay_model:main"
+bot-mmorpg-offline-demo = "bot_mmorpg.scripts.offline_demo:main"
 
 [build-system]
 requires = ["hatchling>=1.18.0"]
@@ -137,6 +152,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/bot_mmorpg"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"game_profiles" = "bot_mmorpg/game_profiles"
+"docs/GAME_AUTOMATION_ARCHITECTURE.md" = "bot_mmorpg/docs/GAME_AUTOMATION_ARCHITECTURE.md"
+"docs/GAME_PROJECT_QUICKSTART.md" = "bot_mmorpg/docs/GAME_PROJECT_QUICKSTART.md"
 
 [tool.hatch.version]
 path = "src/bot_mmorpg/__init__.py"

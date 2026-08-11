@@ -71,7 +71,7 @@ BOT-MMORPG-AI/
 │   └── main.js            # JavaScript (ES modules)
 │
 ├── backend/               # ← Python Backend
-│   └── main_backend.py    # HTTP API server
+│   └── entry_main.py    # HTTP API server
 │
 ├── src-tauri/             # ← Tauri (Rust) Desktop Framework
 │   ├── src/main.rs        # Rust entry point
@@ -186,9 +186,9 @@ Changes are **automatically reloaded** when you save!
 
 ### 2. Make Changes to Backend
 
-Edit `backend/main_backend.py`:
+Edit `backend/entry_main.py`:
 ```bash
-vim backend/main_backend.py
+vim backend/entry_main.py
 ```
 
 Then **restart** the app:
@@ -382,7 +382,7 @@ make test-installer
 
 ### Q: How do I add a new backend endpoint?
 
-**A:** Edit `backend/main_backend.py`, add your endpoint, restart the app.
+**A:** Edit `backend/entry_main.py`, add your endpoint, restart the app.
 
 ### Q: Can I use TypeScript?
 
@@ -439,8 +439,10 @@ npm run dev  # ❌ Wrong! This is not a Node.js project
 ```
 
 **Frontend location:**
-- ✅ `tauri-ui/` (correct)
-- ❌ `frontend/` (doesn't exist)
+- ✅ `tauri-ui/` (the Tauri desktop UI -- this is the "frontend" for the app)
+- ⚠️ `frontend/` does exist, but it's unrelated legacy input-recording tooling
+  (AutoHotPy backups, keyboard/mouse capture scripts), not a web frontend.
+  Don't confuse it with `tauri-ui/`.
 
 **Frontend type:**
 - ✅ Plain HTML/CSS/JavaScript
@@ -456,7 +458,7 @@ npm run dev  # ❌ Wrong! This is not a Node.js project
 **Happy Coding!** 🎮✨
 
 If you have questions, check:
-- `UI_BACKEND_INTEGRATION_ANALYSIS.md` - Architecture details
-- `UI_IMPROVEMENTS_SUMMARY.md` - UI features
-- `BUILD_STATUS.md` - Build system info
-- `INSTALLER_IMPROVEMENTS.md` - Installer features
+- `NOTES.md` - Architecture and build-pipeline details
+- `TWO_UIS_EXPLAINED.md` - Launcher vs. Tauri UI
+- `INSTALLER.md` - Installer features and build system
+- `docs/installer/` - Deeper installer runtime-flow and debugging docs

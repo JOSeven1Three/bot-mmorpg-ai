@@ -52,6 +52,25 @@ function Log-Info([string]$msg) { Write-Host "[INFO] $msg" -ForegroundColor Cyan
 function Log-Warn([string]$msg) { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
 function Log-Fail([string]$msg) { Write-Host "[FAIL] $msg" -ForegroundColor Red }
 
+# .gitattributes marks *.gif/*.avi/*.exe as Git LFS (filter=lfs). If the
+# checkout ran without Git LFS installed/pulled -- no `git lfs install`,
+# a `lfs: true` missing from actions/checkout, or a plain `git clone` on a
+# dev machine -- these paths on disk are ~130-byte LFS pointer stub text
+# files ("version https://git-lfs.github.com/spec/v1 ..."), NOT the real
+# binaries. Test-Path alone can't tell the difference: the stub file
+# exists, so the driver-copy steps below would silently bundle a
+# non-functional installer instead of warning or failing. Call this right
+# after copying any LFS-tracked asset into resources/.
+function Assert-NotLfsPointer([string]$path, [string]$label) {
+  if (-not (Test-Path $path)) { return }
+  $head = Get-Content -Path $path -TotalCount 1 -ErrorAction SilentlyContinue
+  if ($head -and $head.StartsWith("version https://git-lfs.github.com/spec/v1")) {
+    Log-Fail "$label at '$path' is a Git LFS pointer stub, not the real binary."
+    Log-Fail "Run 'git lfs install' then 'git lfs pull' (or install Git LFS: https://git-lfs.com) and re-run the build."
+    throw "$label is an unresolved Git LFS pointer: $path"
+  }
+}
+
 function Log-Step($step, [string]$msg) {
   # `$step` is untyped on purpose: callers pass 6.5, 6.6, 6.7, 6.9 as
   # sub-steps. Typing as [int] would silently truncate/round those to 6/7
@@ -892,6 +911,7 @@ if (Test-Path $mlScriptSrc) {
 $interceptionSrc = Join-Path $root "frontend\input_record\install-interception.exe"
 $interceptionDst = Join-Path $drvInterDir "install-interception.exe"
 if (Test-Path $interceptionSrc) {
+  Assert-NotLfsPointer $interceptionSrc "Interception installer (source)"
   Copy-Item -Force $interceptionSrc $interceptionDst
   Log-Ok "Interception driver copied"
 } else {
@@ -903,6 +923,7 @@ if (Test-Path $interceptionSrc) {
 $vjoySrc = Join-Path $root "versions\0.01\pyvjoy\vJoySetup.exe"
 $vjoyDst = Join-Path $drvVjoyDir "vJoySetup.exe"
 if (Test-Path $vjoySrc) {
+  Assert-NotLfsPointer $vjoySrc "vJoy installer (source)"
   Copy-Item -Force $vjoySrc $vjoyDst
   Log-Ok "vJoy driver copied"
 } else {

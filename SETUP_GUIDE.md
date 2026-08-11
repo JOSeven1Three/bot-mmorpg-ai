@@ -79,7 +79,7 @@ winget install Rustlang.Rustup
 - Close and reopen your terminal
 - Verify: `cargo --version`
 
-#### 2b. Tauri CLI âŒ (Also required for the desktop app)
+#### 2b. Tauri CLI ❌ (Also required for the desktop app)
 
 ```powershell
 cargo install tauri-cli
@@ -97,6 +97,26 @@ python -m pip install uv
 # Or install dependencies through the Windows task wrapper
 powershell -ExecutionPolicy Bypass -File .\scripts\windows_tasks.ps1 install-all
 ```
+
+#### 4. Git LFS ❌ (Required before you clone -- driver installers won't work otherwise)
+
+Driver installers (`src-tauri/drivers/**`, `versions/0.01/pyvjoy/vJoySetup.exe`)
+and a few demo assets are tracked with Git LFS (`.gitattributes`). If Git LFS
+isn't installed **before** you clone, `git clone` checks out ~130-byte pointer
+stub files instead of the real `.exe` installers -- the app will still build,
+but driver installation silently does nothing.
+
+```powershell
+# Install from https://git-lfs.com, then, before cloning:
+git lfs install
+
+# If you already cloned without Git LFS installed, fetch the real files now:
+git lfs pull
+```
+
+`make build-installer` / `scripts\build_pipeline.ps1` will now fail loudly
+with "is a Git LFS pointer stub, not the real binary" if this step was
+skipped, instead of silently bundling a broken driver installer.
 
 ---
 
@@ -241,7 +261,7 @@ make install-uv
 **Solution:**
 ```powershell
 # Pull latest changes
-git pull origin claude/fix-installer-path-wizard-uql5P
+git pull origin master
 
 # Clean and rebuild
 make clean-installer
@@ -259,7 +279,7 @@ BOT-MMORPG-AI/
 │  └─ main.js          ← JavaScript logic
 │
 ├─ backend/            ← Python Backend
-│  └─ main_backend.py  ← HTTP API server
+│  └─ entry_main.py  ← HTTP API server
 │
 ├─ src-tauri/          ← Tauri (Rust) Framework
 │  ├─ src/main.rs      ← Rust entry point
@@ -273,7 +293,9 @@ BOT-MMORPG-AI/
 
 **Key Points:**
 - ✅ Frontend is in `tauri-ui/` (plain HTML/JS)
-- ❌ There is NO `frontend/` directory
+- ⚠️ A `frontend/` directory does exist, but it's unrelated legacy
+  input-recording tooling, not a web frontend -- don't confuse it with
+  `tauri-ui/`
 - ❌ There is NO `package.json`
 - ❌ There is NO npm build process
 - ✅ Uses Tauri (Rust) for desktop framework
@@ -295,7 +317,7 @@ make run
 # 3. Edit files (changes auto-reload)
 # Edit: tauri-ui/index.html
 # Edit: tauri-ui/main.js
-# Edit: backend/main_backend.py
+# Edit: backend/entry_main.py
 
 # 4. Stop with Ctrl+C
 ```
@@ -437,7 +459,7 @@ npm run build        # Not needed!
 ### "Installer still 0.1 MB after rebuild"
 
 **Check:**
-1. Latest code? (`git pull origin claude/fix-installer-path-wizard-uql5P`)
+1. Latest code? (`git pull origin master`)
 2. Clean build? (`make clean-installer` then `make build-installer`)
 3. Backend built? (`ls src-tauri/binaries/main-backend*.exe`)
 
@@ -471,11 +493,11 @@ npm run build        # Not needed!
 
 **Questions?**
 - Check: RUNNING_THE_APP.md
-- Check: UI_BACKEND_INTEGRATION_ANALYSIS.md
-- Check: BUILD_STATUS.md
+- Check: NOTES.md
+- Check: INSTALLER.md
 
 ---
 
-**Last Updated:** 2026-01-12
+**Last Updated:** 2026-08-08
 **Status:** ✅ Installer fix committed, setup guide complete
 **Next Step:** Install Rust, then run `make run`

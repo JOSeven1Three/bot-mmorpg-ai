@@ -3984,8 +3984,16 @@ async fn start_bot(
     app: AppHandle,
     window: Window,
     game_id: Option<String>,
+    runtime_mode: Option<String>,
 ) -> Result<String, String> {
     let gid = normalize_game_id(game_id);
+    let requested_mode = runtime_mode.unwrap_or_else(|| "preview".to_string());
+    if !matches!(requested_mode.as_str(), "preview" | "assist") {
+        return Err("Desktop runtime mode must be preview or assist; control uses a separate offline-only workflow.".to_string());
+    }
+    if gid == "diablo_4" && requested_mode != "preview" {
+        return Err("Diablo IV is restricted to screen-only preview mode.".to_string());
+    }
     let inner = state.inner.clone();
 
     let catalog = api_get_with(
@@ -4052,6 +4060,44 @@ async fn start_bot(
             ));
         }
     };
+    let evaluation_report = active
+        .get("evaluation_report")
+        .and_then(|value| value.as_str())
+        .map(PathBuf::from)
+        .or_else(|| {
+            Path::new(&model_path)
+                .parent()
+                .map(|parent| parent.join("evaluation_report.json"))
+        })
+        .ok_or_else(|| "Active model has no evaluation report path.".to_string())?;
+    if !evaluation_report.is_file() {
+        return Err(format!(
+            "Cannot start inference: evaluation report is missing at '{}'. Run Offline evaluate on held-out data, then activate the model again.",
+            evaluation_report.display()
+        ));
+    }
+    let promoted_level = active
+        .get("promotion_level")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unverified");
+    let promotion_rank = |level: &str| match level {
+        "preview" => 1,
+        "assist" => 2,
+        "control" => 3,
+        _ => 0,
+    };
+    if promotion_rank(promoted_level) < promotion_rank(&requested_mode) {
+        return Err(format!(
+            "Model is promoted for '{}' but '{}' was requested. Re-evaluate held-out data for the higher level and reactivate it.",
+            promoted_level, requested_mode
+        ));
+    }
+    let evaluation_report_s = evaluation_report.display().to_string();
+    let logs_dir = local_data_root(&app).join("logs");
+    fs::create_dir_all(&logs_dir)
+        .map_err(|e| format!("Cannot create inference audit directory: {}", e))?;
+    let audit_log = logs_dir.join(format!("inference-{}-{}.jsonl", gid, requested_mode));
+    let audit_log_s = audit_log.display().to_string();
 
     let _ = window.emit::<String>(
         "terminal_update",
@@ -4065,17 +4111,62 @@ async fn start_bot(
     // installs). Keeping it on the legacy local-spawn path while the
     // others used the sidecar would have left exactly that failure
     // mode propagating to the UI.
+    // Diablo IV is intentionally screen-only. Blizzard's EULA prohibits
+    // unapproved automated control, so this path can show capped model
+    // predictions for calibration and user guidance but never send input.
+    let inference_args: Vec<&str> = if gid == "diablo_4" {
+        vec![
+            "--model",
+            &model_path,
+            "--game-id",
+            "diablo_4",
+            "--dry-run",
+            "--mode",
+            "preview",
+            "--evaluation-report",
+            &evaluation_report_s,
+            "--audit-log",
+            &audit_log_s,
+            "--no-gamepad",
+            "--max-frames",
+            "300",
+        ]
+    } else {
+        vec![
+            "--model",
+            &model_path,
+            "--game-id",
+            &gid,
+            "--mode",
+            &requested_mode,
+            "--dry-run",
+            "--evaluation-report",
+            &evaluation_report_s,
+            "--audit-log",
+            &audit_log_s,
+        ]
+    };
     let job_id = start_python_script_via_sidecar(
         &app,
         &inner,
         &window,
         "inference",
         "3-test_model.py",
-        &["--model", &model_path],
+        &inference_args,
         None,
     )
     .await?;
-    Ok(format!("Started test_model job {}", job_id))
+    if gid == "diablo_4" {
+        Ok(format!(
+            "Started screen-only Diablo IV preview job {} (300-frame cap; no input is sent)",
+            job_id
+        ))
+    } else {
+        Ok(format!(
+            "Started {} recommendation job {} (no input is sent; audit: {})",
+            requested_mode, job_id, audit_log_s
+        ))
+    }
 }
 
 /// Resolve the active model's path to a concrete `.pth` checkpoint
@@ -4484,6 +4575,7 @@ async fn mh_set_active(
     // or training_finalized); the Python endpoint persists it under
     // `model_file` and start_bot prefers it over walking the dir.
     model_file: Option<String>,
+    promotion_level: Option<String>,
 ) -> Result<Value, String> {
     let gid = normalize_game_id(game_id);
     api_post_with(
@@ -4494,6 +4586,7 @@ async fn mh_set_active(
             "model_id": model_id,
             "path": path,
             "model_file": model_file.unwrap_or_default(),
+            "promotion_level": promotion_level.unwrap_or_else(|| "preview".to_string()),
         }),
     )
     .await
@@ -4533,15 +4626,49 @@ async fn modelhub_validate_model(
 #[tauri::command]
 async fn modelhub_run_offline_evaluation(
     state: tauri::State<'_, AppState>,
+    app: AppHandle,
+    window: Window,
     model_dir: String,
     dataset_dir: String,
+    game_id: Option<String>,
+    task: Option<String>,
+    promotion_level: Option<String>,
 ) -> Result<Value, String> {
-    api_post_with(
+    let gid = normalize_game_id(game_id);
+    let selected_task = task.unwrap_or_else(|| "general".to_string());
+    let level = promotion_level.unwrap_or_else(|| "preview".to_string());
+    if !matches!(level.as_str(), "preview" | "assist" | "control") {
+        return Err("promotion_level must be preview, assist, or control".to_string());
+    }
+    let job_id = start_python_script_via_sidecar(
+        &app,
         &state.inner,
-        "/modelhub/offline-eval",
-        json!({"model_dir": model_dir, "dataset_dir": dataset_dir}),
+        &window,
+        "offline_evaluation",
+        "evaluate_local_model.py",
+        &[
+            "--model-dir",
+            &model_dir,
+            "--dataset-dir",
+            &dataset_dir,
+            "--game-id",
+            &gid,
+            "--task",
+            &selected_task,
+            "--level",
+            &level,
+        ],
+        None,
     )
-    .await
+    .await?;
+    Ok(json!({
+        "ok": true,
+        "status": "started",
+        "job_id": job_id,
+        "game_id": gid,
+        "task": selected_task,
+        "promotion_level": level
+    }))
 }
 
 // ---------------------------
@@ -6626,6 +6753,185 @@ fn install_drivers(app: tauri::AppHandle) -> Value {
 }
 
 // ---------------------------
+// TRAINING SCHOOL: Diablo IV screen-only tools
+// ---------------------------
+// Audit: tauri-ui/main.js's Training School panel (launchSchoolRegionCatcher,
+// captureSchoolDiagnostics, launchSchoolDryRunPreview) invokes
+// training_launch_region_catcher, training_capture_profile_diagnostics, and
+// inference_launch_dry_run_preview. None of these had a #[tauri::command]
+// handler registered, so every click failed at runtime with "command not
+// found" -- caught by
+// tests/test_issue_70_75_76_regressions.py::test_every_invoke_target_is_a_registered_command.
+// Implementations below reuse the same building blocks as the rest of the
+// file: build_python_script_command() to resolve the bundled script + env,
+// then either submit_sidecar_job() (fire-and-forget, like start_recording)
+// or a direct synchronous spawn (like repair_pytorch_via_pip) depending on
+// whether the caller needs an immediate result.
+
+/// Launches the interactive region-catcher editor (`region_catcher.py`) as a
+/// sidecar job. It opens its own OpenCV window and persists edits to the
+/// game profile itself, so -- like start_recording/start_bot -- this only
+/// needs to confirm the job was submitted, not wait for it to finish.
+#[tauri::command]
+async fn training_launch_region_catcher(
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+    window: Window,
+    game_id: Option<String>,
+) -> Result<Value, String> {
+    let gid = normalize_game_id(game_id);
+    let cmd = build_python_script_command(&app, "region_catcher.py", &["--game", &gid], &window)?;
+    let inner = state.inner.clone();
+    let job_id = submit_sidecar_job(
+        &inner,
+        &window,
+        "region_catcher",
+        cmd.argv,
+        cmd.env,
+        Some(cmd.cwd),
+        None,
+    )
+    .await?;
+    Ok(json!({"status": "started", "job_id": job_id}))
+}
+
+/// Captures one annotated frame of the game's profile regions via
+/// `1-collect_data.py --diagnose-profile` and returns the directory it was
+/// written to. Unlike the command above this runs synchronously (same
+/// pattern as repair_pytorch_via_pip): it's a one-shot, sub-second capture
+/// and the UI needs the resulting path back immediately, not a job_id to
+/// poll.
+#[tauri::command]
+async fn training_capture_profile_diagnostics(
+    app: AppHandle,
+    window: Window,
+    game_id: Option<String>,
+) -> Result<Value, String> {
+    let gid = normalize_game_id(game_id);
+    // "artifacts/diagnostics/<game>/<timestamp>" -- data/raw (the --out
+    // default) is for training datasets, not one-off diagnostic captures.
+    let out_dir = local_data_root(&app).join("artifacts");
+    let out_dir_s = out_dir.display().to_string();
+    let cmd = build_python_script_command(
+        &app,
+        "1-collect_data.py",
+        &["--game", &gid, "--diagnose-profile", "--out", &out_dir_s],
+        &window,
+    )?;
+
+    let mut command = Command::new(&cmd.argv[0]);
+    command.args(&cmd.argv[1..]);
+    command.current_dir(&cmd.cwd);
+    for (k, v) in &cmd.env {
+        if let Some(s) = v.as_str() {
+            command.env(k, s);
+        }
+    }
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = command
+        .output()
+        .map_err(|e| format!("Failed to launch profile diagnostics capture: {}", e))?;
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let stderr_str = String::from_utf8_lossy(&output.stderr);
+
+    // collect_data.py logs via logging.basicConfig, which defaults to
+    // stderr, not stdout. Check both streams so a future logging-config
+    // change doesn't silently break this.
+    let marker = "Saved profile diagnostics to: ";
+    let dir = stderr_str
+        .lines()
+        .chain(stdout_str.lines())
+        .find_map(|l| l.split(marker).nth(1))
+        .map(|s| s.trim().to_string());
+
+    if !output.status.success() || dir.is_none() {
+        let tail: Vec<&str> = stderr_str.lines().rev().take(10).collect();
+        let tail: String = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
+        return Err(format!(
+            "Profile diagnostics capture failed (exit {}): {}",
+            output
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "?".to_string()),
+            if tail.is_empty() { "no output captured".to_string() } else { tail }
+        ));
+    }
+
+    Ok(json!({"status": "ok", "diagnostics_dir": dir.unwrap()}))
+}
+
+/// Launches a capped, input-free inference preview
+/// (`3-test_model.py --dry-run --max-frames N`) as a sidecar job.
+/// Fire-and-forget like start_bot: predictions stream to the terminal via
+/// the sidecar log bridge, and --dry-run guarantees nothing is ever sent to
+/// the game (see test_model.py's diablo_4 dry-run guard).
+#[tauri::command]
+async fn inference_launch_dry_run_preview(
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+    window: Window,
+    model_path: String,
+    max_frames: Option<u32>,
+) -> Result<Value, String> {
+    let trimmed = model_path.trim();
+    if trimmed.is_empty() {
+        return Err("model_path is required for dry-run preview".to_string());
+    }
+    let report_path = Path::new(trimmed)
+        .parent()
+        .map(|parent| parent.join("evaluation_report.json"))
+        .ok_or_else(|| "model_path has no parent directory".to_string())?;
+    if !report_path.is_file() {
+        return Err(format!(
+            "Offline evaluation required before preview. Missing '{}'.",
+            report_path.display()
+        ));
+    }
+    let report_path_s = report_path.display().to_string();
+    let frames = max_frames.unwrap_or(120).max(1);
+    let frames_s = frames.to_string();
+    let cmd = build_python_script_command(
+        &app,
+        "3-test_model.py",
+        &[
+            "--model",
+            trimmed,
+            "--dry-run",
+            "--mode",
+            "preview",
+            "--evaluation-report",
+            &report_path_s,
+            "--max-frames",
+            &frames_s,
+            "--game-id",
+            "diablo_4",
+        ],
+        &window,
+    )?;
+    let inner = state.inner.clone();
+    let job_id = submit_sidecar_job(
+        &inner,
+        &window,
+        "dry_run_preview",
+        cmd.argv,
+        cmd.env,
+        Some(cmd.cwd),
+        None,
+    )
+    .await?;
+    Ok(json!({"status": "started", "job_id": job_id, "max_frames": frames}))
+}
+
+// ---------------------------
 // MAIN
 // ---------------------------
 fn main() {
@@ -6775,6 +7081,11 @@ fn main() {
             modelhub_validate_model,
             modelhub_run_offline_evaluation,
             install_drivers,
+            // Training School (Diablo IV) handlers -- see the audit comment
+            // above their definitions for why these were missing.
+            training_launch_region_catcher,
+            training_capture_profile_diagnostics,
+            inference_launch_dry_run_preview,
             // Previously missing handlers the UI was already invoking
             // (every Teach-tab interaction silently failed without these):
             generate_dataset_name,
