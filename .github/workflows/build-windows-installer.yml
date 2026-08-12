@@ -106,22 +106,19 @@ jobs:
       - name: Setup MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Install Tauri CLI
-        shell: cmd
-        run: cargo install tauri-cli --version "^1.0" --force
-
       # Single source of truth: the same pipeline the Release workflow runs.
       # This guarantees nightly + PR + tagged builds all produce the SAME
       # installer shape (full embedded Python runtime, packed zip, NSIS)
       # rather than a 95 KB PyInstaller stub. The -Version override makes
       # the bundle filename embed the computed version
       # (BOT-MMORPG-AI_<semver>_x64-setup.exe).
+      # NOTE: Skip global `cargo install tauri-cli` -- invoke cargo tauri directly
       - name: Build installer (Tauri + NSIS via build_pipeline)
         shell: pwsh
         env:
           BOT_BUILD_SEMVER: ${{ steps.ver.outputs.semver }}
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_pipeline.ps1 -Version "$env:BOT_BUILD_SEMVER"
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_pipeline.ps1 -Version "$env:BOT_BUILD_SEMVER" -SkipTauriCliInstall
 
       - name: Build and verify optional ML engine asset
         shell: pwsh
