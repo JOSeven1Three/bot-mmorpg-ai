@@ -568,7 +568,11 @@ class InferenceEngine:
         with torch.no_grad():
             outputs = self.model(input_tensor)
             # Apply sigmoid for multi-label probabilities
-            probs = torch.sigmoid(outputs)
+            if self.metadata.get("action_schema"):
+                from bot_mmorpg.training.actions import ActionSchema
+                probs = ActionSchema.from_dict(self.metadata["action_schema"]).decode(outputs)
+            else:
+                probs = torch.sigmoid(outputs)
 
         # Convert to numpy
         predictions = probs.cpu().numpy()[0]
@@ -679,8 +683,8 @@ class InferenceEngine:
         # ── Smooth mouse movement via delta ──
         # dx/dy are sigmoid outputs in [0,1]; remap to [-1,1] then scale to pixels
         # The model learned normalized deltas: -1 = full left, +1 = full right
-        dx_remapped = (dx - 0.5) * 2.0  # [0,1] → [-1,1]
-        dy_remapped = (dy - 0.5) * 2.0
+        dx_remapped = dx if self.metadata.get("action_schema") else (dx - 0.5) * 2.0  # [0,1] → [-1,1]
+        dy_remapped = dy if self.metadata.get("action_schema") else (dy - 0.5) * 2.0
         # Scale: max ~100px per frame for smooth camera
         pixel_dx = int(dx_remapped * 100)
         pixel_dy = int(dy_remapped * 100)

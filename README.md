@@ -1,5 +1,13 @@
 # BOT-MMORPG-AI
 
+## Gameplay learning and corrections
+
+The local learning workflow records independent sessions, learns button and mouse
+outputs separately, incorporates human corrections, and promotes candidates only
+after held-out comparison. See [Learning from your gameplay](docs/LEARNING_LOOP.md)
+for recording, shadow mode, corrections, bounded opt-in play, and retraining.
+Offline imitation scores are not claims of gameplay success.
+
 > Personal continuation repo: `https://github.com/JOSeven1Three/bot-mmorpg-ai`
 >
 > Upstream source repo remains available separately. Use the personal repo above when you want your latest working state on a new computer.

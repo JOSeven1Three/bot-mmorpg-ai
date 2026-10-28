@@ -6,7 +6,7 @@ Includes comprehensive error handling for production use.
 
 Supports keyboard, gamepad, and optional mouse recording.
 Mouse recording is additive and non-destructive: when enabled it
-appends 6 extra values to the action vector; when disabled the
+appends 10 extra values to the action vector; when disabled the
 existing keyboard+gamepad pipeline is completely unchanged.
 """
 
@@ -15,11 +15,14 @@ import datetime
 import json
 import logging
 import time
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+
+_RECORDING_SESSION_ID = uuid.uuid4().hex
 
 # Configure logging
 logging.basicConfig(
@@ -121,9 +124,10 @@ def keys_to_output(keys: List[str]) -> List[int]:
     return output
 
 
-def gamepad_keys_to_output(lista: List) -> List[int]:
-    """Convert gamepad input to integer list."""
-    return [int(elem) for elem in lista]
+def gamepad_keys_to_output(lista: List) -> List[float]:
+    """Preserve analog inputs in a fixed twenty-channel gamepad layout."""
+    values = [float(elem) for elem in lista[:20]]
+    return values + [0.0] * (20 - len(values))
 
 
 def validate_dependencies() -> bool:
@@ -199,8 +203,8 @@ def capture_input(
     Mouse recording is additive and non-destructive:
     - When *mouse_capturer* is ``None`` the returned mouse vector is ``None``
       and the existing keyboard+gamepad values are unchanged.
-    - When a :class:`MouseCapture` instance is provided, a 6-element float32
-      array ``[x, y, lmb, rmb, mmb, scroll]`` is appended.
+    - When a :class:`MouseCapture` instance is provided, a 10-element float32
+      array ``[x, y, dx, dy, vx, vy, lmb, rmb, mmb, scroll]`` is appended.
 
     Args:
         mouse_capturer: Optional MouseCapture instance (or None to skip).
@@ -220,21 +224,21 @@ def capture_input(
         try:
             gamepad_keys = gamepad_check() if gamepad_check else []
             gamepad_output = (
-                gamepad_keys_to_output(gamepad_keys) if gamepad_keys else []
+                gamepad_keys_to_output(gamepad_keys) if gamepad_keys else [0.0] * 20
             )
         except Exception:
-            # Gamepad not available - use empty output
-            gamepad_output = []
+            # Gamepad unavailable: preserve the fixed channel layout
+            gamepad_output = [0.0] * 20
 
         # Capture mouse (additive – only when explicitly enabled)
         mouse_output = None
         if mouse_capturer is not None:
             try:
                 state = mouse_capturer.snapshot()
-                mouse_output = state.to_array()  # float32, shape (6,)
+                mouse_output = state.to_array()  # float32, shape (10,)
             except Exception:
-                # Mouse capture failure must never break recording
-                mouse_output = None
+                # Reject only this sample; the outer loop handles retry/stop
+                raise InputCaptureError("Mouse snapshot failed; sample discarded")
 
         return keyboard_output, gamepad_output, mouse_output
 
@@ -264,6 +268,9 @@ def save_training_data(data: List, path: Path) -> bool:
         # with different shapes, so we must use dtype=object + allow_pickle.
         arr = np.array(data, dtype=object)
         np.save(path, arr, allow_pickle=True)
+        path.with_suffix(".session.json").write_text(
+            json.dumps({"session_id": _RECORDING_SESSION_ID}), encoding="utf-8"
+        )
         logger.info(f"Saved {len(data)} frames to {path}")
 
         # Verify save
@@ -358,7 +365,9 @@ def load_roi_overrides(
     for name, value in payload.items():
         if isinstance(value, list) and len(value) == 4:
             merged[name] = [float(part) for part in value]
-        elif isinstance(value, dict) and "pixels" in value and len(value["pixels"]) == 4:
+        elif (
+            isinstance(value, dict) and "pixels" in value and len(value["pixels"]) == 4
+        ):
             merged[name] = pixel_region_to_normalized(value["pixels"], capture_region)
         else:
             raise ValueError(
@@ -379,7 +388,9 @@ def annotate_profile_regions(
     metadata: Dict[str, Dict[str, int]] = {}
 
     for idx, (name, normalized) in enumerate(important_regions.items()):
-        left, top, right, bottom = normalized_region_to_pixels(normalized, capture_region)
+        left, top, right, bottom = normalized_region_to_pixels(
+            normalized, capture_region
+        )
         local_left = max(0, left - x1)
         local_top = max(0, top - y1)
         local_right = max(0, right - x1)
@@ -389,7 +400,9 @@ def annotate_profile_regions(
             int(220 - (idx * 41) % 140),
             int(120 + (idx * 67) % 135),
         )
-        cv2.rectangle(annotated, (local_left, local_top), (local_right, local_bottom), color, 2)
+        cv2.rectangle(
+            annotated, (local_left, local_top), (local_right, local_bottom), color, 2
+        )
         cv2.putText(
             annotated,
             name,
@@ -509,7 +522,7 @@ Example:
     parser.add_argument(
         "--mouse",
         action="store_true",
-        help="Enable mouse recording (additive – appends 6 values to action vector)",
+        help="Enable mouse recording (additive – appends 10 values to action vector)",
     )
     parser.add_argument(
         "--diagnose-profile",
@@ -524,10 +537,13 @@ Example:
         default=None,
         help=(
             "Optional JSON file with per-region overrides for diagnostics. "
-            "Each region may be [x,y,w,h] normalized or {\"pixels\": [x1,y1,x2,y2]}."
+            'Each region may be [x,y,w,h] normalized or {"pixels": [x1,y1,x2,y2]}.'
         ),
     )
     args = parser.parse_args(argv)
+
+    global _RECORDING_SESSION_ID
+    _RECORDING_SESSION_ID = uuid.uuid4().hex
 
     # Environment variable fallback for --mouse (used by Tauri/launcher UI)
     if not args.mouse:
@@ -651,7 +667,9 @@ Example:
 
     if args.diagnose_profile:
         if game_profile is None:
-            logger.error("--diagnose-profile requires --game so profile regions are known.")
+            logger.error(
+                "--diagnose-profile requires --game so profile regions are known."
+            )
             return 1
         try:
             important_regions = game_profile.important_regions
@@ -705,7 +723,7 @@ Example:
             mouse_capturer = MouseCapture(capture_region=region)
             mouse_capturer.start()
             logger.info(
-                "Mouse recording ENABLED (adds 6 values: x, y, lmb, rmb, mmb, scroll)"
+                "Mouse recording ENABLED (adds 10 values: x, y, dx, dy, vx, vy, lmb, rmb, mmb, scroll)"
             )
 
     # Countdown
