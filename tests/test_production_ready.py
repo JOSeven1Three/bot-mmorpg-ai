@@ -361,9 +361,9 @@ class TestMouseRecordingAdditive:
         assert abs(mouse[0] - 0.5) < 0.01  # x
         assert mouse[6] == 1.0  # lmb (index 6 in 10-value vector)
 
-    def test_mouse_failure_does_not_break_recording(self):
-        """Test that mouse capture failure returns None, not an error."""
-        from bot_mmorpg.scripts.collect_data import capture_input
+    def test_mouse_failure_discards_sample_without_changing_action_width(self):
+        """The loop can retry, but an incomplete label must never be saved."""
+        from bot_mmorpg.scripts.collect_data import InputCaptureError, capture_input
 
         mock_mc = MagicMock()
         mock_mc.snapshot.side_effect = RuntimeError("Mouse device lost")
@@ -373,11 +373,8 @@ class TestMouseRecordingAdditive:
                 "bot_mmorpg.scripts.collect_data.gamepad_check",
                 return_value=[0] * 20,
             ):
-                kb, gp, mouse = capture_input(mouse_capturer=mock_mc)
-
-        assert len(kb) == 9
-        assert len(gp) == 20
-        assert mouse is None  # Gracefully degraded
+                with pytest.raises(InputCaptureError, match="sample discarded"):
+                    capture_input(mouse_capturer=mock_mc)
 
     def test_output_vector_sizes(self):
         """Test combined vector sizes: kb(9) + gp(20) = 29 without mouse, +10 with."""
@@ -573,7 +570,7 @@ class TestDataCollectionPipeline:
         raw = [0.5, 1.0, -0.3, 0.7, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0]
         out = gamepad_keys_to_output(raw)
         assert len(out) == 20
-        assert all(isinstance(v, int) for v in out)
+        assert out == raw  # Preserve signed axes and fractional triggers.
 
     def test_save_training_data_roundtrip(self, tmp_path):
         """Test training data save and load."""

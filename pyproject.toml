@@ -134,6 +134,7 @@ Repository = "https://github.com/ruslanmv/BOT-MMORPG-AI"
 Issues = "https://github.com/ruslanmv/BOT-MMORPG-AI/issues"
 
 [project.scripts]
+bot-mmorpg-learn = "bot_mmorpg.scripts.learning:main"
 bot-mmorpg-collect = "bot_mmorpg.scripts.collect_data:main"
 bot-mmorpg-inspect = "bot_mmorpg.scripts.inspect_dataset:main"
 bot-mmorpg-train = "bot_mmorpg.scripts.train_model:main"

@@ -1364,6 +1364,8 @@ def load_model(
             "Please specify model_name parameter."
         )
 
+    num_actions = metadata.get("num_actions", num_actions)
+
     # Get temporal frames from metadata
     temporal_frames = metadata.get("temporal_frames", 4)
 
@@ -1426,6 +1428,7 @@ def save_model(
         "model_state_dict": model.state_dict(),
         "model_name": model_name or model.__class__.__name__,
         "num_parameters": count_parameters(model),
+        "num_actions": getattr(model, "num_actions", 29),
     }
 
     if optimizer is not None:

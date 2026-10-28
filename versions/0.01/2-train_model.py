@@ -593,5 +593,12 @@ def main(argv=None) -> int:
     return 0
 
 
+# Shared implementations prevent launcher/CLI training from diverging.
+if PYTORCH_AVAILABLE:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+    from bot_mmorpg.scripts.train_model import (
+        GameplayDataset, train_epoch, validate, train_model, main,
+    )
+
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

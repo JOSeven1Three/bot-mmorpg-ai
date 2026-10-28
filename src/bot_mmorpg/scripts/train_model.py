@@ -112,131 +112,29 @@ MODEL_NAME = "model/mmorpg_bot"
 # =============================================================================
 
 
-class GameplayDataset(Dataset):
-    """
-    PyTorch Dataset for gameplay recordings.
-
-    Loads .npy files containing (frame, action) pairs.
-    Supports temporal windowing for LSTM-based models.
-    """
-
-    def __init__(
-        self,
-        data_dir: Path,
-        seq_len: int = 1,
-        transform=None,
-        limit_files: Optional[int] = None,
-        file_pattern: str = "training_data-*.npy",
-    ):
-        """
-        Args:
-            data_dir: Directory containing training_data-*.npy files
-            seq_len: Number of consecutive frames per sample (for temporal models)
-            transform: Optional transforms to apply
-            limit_files: Limit number of files to load (for testing)
-            file_pattern: Glob pattern for data files
-        """
-        self.data_dir = Path(data_dir)
-        self.seq_len = seq_len
-        self.transform = transform
-
-        # Find all data files (support multiple patterns)
-        patterns = [file_pattern, "preprocessed_training_data-*.npy"]
-        self.files = []
-        for pattern in patterns:
-            self.files.extend(sorted(self.data_dir.glob(pattern)))
-
-        # Remove duplicates and sort
-        self.files = sorted(set(self.files))
-
-        if limit_files:
-            self.files = self.files[:limit_files]
-
-        if not self.files:
-            raise ValueError(f"No training data found in {data_dir}")
-
-        print(f"[Dataset] Found {len(self.files)} data files")
-
-        # Load all data into memory
-        self._load_data()
-
-    def _load_data(self):
-        """Load all data files into memory with security validation."""
-        all_frames = []
-        all_actions = []
-
-        for f in self.files:
-            try:
-                # Use secure loader if available for pickle safety
-                if SECURE_LOADER_AVAILABLE and load_training_data_secure is not None:
-                    try:
-                        data = load_training_data_secure(
-                            f, validate=True, allow_untrusted=True
-                        )
-                    except DataValidationError as e:
-                        print(f"[Dataset] Security warning for {f}: {e}")
-                        print("[Dataset] Skipping untrusted file")
-                        continue
-                else:
-                    # Fallback to standard loading with pickle (legacy support)
-                    # WARNING: Only use with trusted data sources
-                    data = np.load(f, allow_pickle=True)
-
-                for item in data:
-                    if len(item) >= 2:
-                        frame, action = item[0], item[1]
-                        all_frames.append(frame)
-                        all_actions.append(action)
-            except Exception as e:
-                print(f"[Dataset] Warning: Could not load {f}: {e}")
-
-        if not all_frames:
-            raise ValueError("No valid data loaded from files")
-
-        self.frames = np.array(all_frames)
-        self.actions = np.array(all_actions, dtype=np.float32)
-
-        # Auto-detect action vector size (handles variable mouse sizes)
-        self.num_actions = (
-            self.actions.shape[1] if self.actions.ndim == 2 else len(self.actions[0])
+# One shared loader for the CLI, launcher and offline evaluator.
+if PYTORCH_AVAILABLE:
+    try:
+        from bot_mmorpg.training.actions import (
+            MixedActionLoss,
+            action_metrics,
         )
+        from bot_mmorpg.training.recordings import (
+            LegacyGameplayDataset as GameplayDataset,
+        )
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from bot_mmorpg.training.actions import (
+            MixedActionLoss,
+            action_metrics,
+        )
+        from bot_mmorpg.training.recordings import (
+            LegacyGameplayDataset as GameplayDataset,
+        )
+else:
 
-        print(f"[Dataset] Loaded {len(self.frames)} samples")
-        print(f"[Dataset] Frame shape: {self.frames[0].shape}")
-        print(f"[Dataset] Action shape: {self.actions[0].shape}")
-        print(f"[Dataset] Auto-detected num_actions: {self.num_actions}")
-
-    def __len__(self) -> int:
-        return max(0, len(self.frames) - self.seq_len + 1)
-
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Get a training sample."""
-        # Get sequence of frames
-        if self.seq_len > 1:
-            frames = self.frames[idx : idx + self.seq_len]
-        else:
-            frames = self.frames[idx : idx + 1]
-
-        # Get action for last frame in sequence
-        action = self.actions[idx + self.seq_len - 1]
-
-        # Convert to tensor (NCHW format for PyTorch)
-        frames = torch.tensor(frames, dtype=torch.float32)
-        frames = frames.permute(0, 3, 1, 2)  # (seq, C, H, W)
-        frames = frames / 255.0  # Normalize to [0, 1]
-
-        # Remove sequence dim if seq_len == 1
-        if self.seq_len == 1:
-            frames = frames.squeeze(0)
-
-        action = torch.tensor(action, dtype=torch.float32)
-
-        return frames, action
-
-
-# =============================================================================
-# Training Functions
-# =============================================================================
+    class GameplayDataset(Dataset):
+        pass
 
 
 def train_epoch(
@@ -315,28 +213,35 @@ def validate(
 ) -> Tuple[float, float]:
     """Validate the model."""
     model.eval()
-    total_loss = 0.0
-    correct = 0
-    total = 0
-
+    total_loss, count = 0.0, 0
+    predictions, targets = [], []
+    schema = getattr(criterion, "schema", None)
     with torch.no_grad():
         for frames, actions in dataloader:
-            frames = frames.to(device)
-            actions = actions.to(device)
-
-            outputs = model(frames)
-            loss = criterion(outputs, actions)
-            total_loss += loss.item()
-
-            # Calculate accuracy (for multi-label, use threshold)
-            preds = (torch.sigmoid(outputs) > 0.5).float()
-            correct += (preds == actions).all(dim=1).sum().item()
-            total += actions.size(0)
-
-    avg_loss = total_loss / len(dataloader) if len(dataloader) > 0 else 0.0
-    accuracy = correct / total if total > 0 else 0.0
-
-    return avg_loss, accuracy
+            outputs = model(frames.to(device))
+            labels = actions.to(device)
+            total_loss += criterion(outputs, labels).item() * len(actions)
+            count += len(actions)
+            decoded = schema.decode(outputs) if schema else torch.sigmoid(outputs)
+            predictions.append(decoded.cpu().numpy())
+            targets.append(actions.numpy())
+    if not count:
+        raise ValueError("Evaluation dataset is empty")
+    if schema:
+        metrics = action_metrics(
+            np.concatenate(predictions), np.concatenate(targets), schema
+        )
+        print(
+            f"  Button F1: {metrics['button_f1']:.4f}; continuous MAE: {metrics['continuous_mae']}"
+        )
+        accuracy = metrics["button_exact"]
+    else:
+        accuracy = float(
+            ((np.concatenate(predictions) > 0.5) == np.concatenate(targets))
+            .all(axis=1)
+            .mean()
+        )
+    return total_loss / count, accuracy
 
 
 def _enable_gradient_checkpointing(model: nn.Module) -> bool:
@@ -429,7 +334,17 @@ def train_model(
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     # Loss function (multi-label binary cross-entropy)
-    criterion = nn.BCEWithLogitsLoss()
+    source = train_loader.dataset
+    while hasattr(source, "dataset"):
+        source = source.dataset
+    schema = getattr(source, "schema", None)
+    criterion = MixedActionLoss(schema) if schema else nn.BCEWithLogitsLoss()
+    checkpoint_info = {"action_schema": schema.to_dict()} if schema else {}
+    if hasattr(source, "seq_len"):
+        checkpoint_info["temporal_frames"] = source.seq_len
+    if hasattr(source, "num_actions"):
+        checkpoint_info["num_actions"] = source.num_actions
+    save_dir.mkdir(parents=True, exist_ok=True)
 
     # Training history
     best_val_loss = float("inf")
@@ -486,7 +401,8 @@ def train_model(
                     optimizer=optimizer,
                     epoch=epoch,
                     loss=val_loss,
-                    model_name=model.__class__.__name__,
+                    model_name=model_name,
+                    **checkpoint_info,
                 )
                 print(f"  Saved best model to {save_path}")
         else:
@@ -499,7 +415,13 @@ def train_model(
         if (epoch + 1) % 5 == 0:
             save_path = save_dir / f"{model_name}_epoch{epoch + 1}.pth"
             save_model(
-                model, str(save_path), optimizer=optimizer, epoch=epoch, loss=train_loss
+                model,
+                str(save_path),
+                optimizer=optimizer,
+                epoch=epoch,
+                loss=train_loss,
+                model_name=model_name,
+                **checkpoint_info,
             )
             print(f"  Checkpoint saved to {save_path}")
 
@@ -511,7 +433,14 @@ def train_model(
 
     # Save final model
     save_path = save_dir / f"{model_name}_final.pth"
-    save_model(model, str(save_path), optimizer=optimizer, epoch=epochs - 1)
+    save_model(
+        model,
+        str(save_path),
+        optimizer=optimizer,
+        epoch=epochs - 1,
+        model_name=model_name,
+        **checkpoint_info,
+    )
     print(f"Final model saved to {save_path}")
 
     return model
@@ -682,14 +611,13 @@ def main(argv=None) -> int:
         print(f"[Error] {e}")
         return 1
 
-    # Split train/val
-    total_size = len(dataset)
-    val_size = int(total_size * args.val_split)
-    train_size = total_size - val_size
-
-    train_dataset, val_dataset = torch.utils.data.random_split(
-        dataset, [train_size, val_size]
-    )
+    # Group whole recordings before creating train/validation loaders.
+    try:
+        train_dataset, val_dataset = dataset.split(args.val_split)
+    except ValueError as exc:
+        print(f"[Error] {exc}")
+        return 1
+    val_size = len(val_dataset)
 
     print(f"Train samples: {len(train_dataset)}")
     print(f"Val samples: {len(val_dataset)}")
@@ -720,6 +648,10 @@ def main(argv=None) -> int:
     if num_actions > 29:
         mouse_extra = num_actions - 29
         print(f"  (keyboard=9 + gamepad=20 + mouse={mouse_extra})")
+
+    if num_actions != dataset.num_actions:
+        print("[Error] --num-actions must match recorded action schema")
+        return 1
 
     # Create model
     print(f"Creating model: {args.model}")

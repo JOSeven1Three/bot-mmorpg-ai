@@ -223,6 +223,8 @@ frontend/assets/backup/
 /third_party/wheelhouse
 
 # User session data
+/.test-tmp/
+/learning/
 settings/session/
 *.json
 

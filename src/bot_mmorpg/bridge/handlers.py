@@ -316,61 +316,35 @@ class CommandHandler:
             args=(data_path, config),
             daemon=True,
         )
-        self._training_thread.start()
-
         self.training_state.is_training = True
+        self._training_thread.start()
 
         return {"status": "started"}
 
     def _training_loop(self, data_path: str, config: Dict[str, Any]):
         """Background training loop with event emission."""
         try:
-            _get_torch()
-            from bot_mmorpg.scripts.models_pytorch import create_model
-            from bot_mmorpg.training import CurriculumConfig, CurriculumTrainer
+            from bot_mmorpg.training.learning_loop import run_cycle
 
-            # Create model
-            model = create_model(
-                architecture=config.get("architecture", "efficientnet_lstm"),
-                num_classes=config.get("num_classes", 12),
-                input_size=tuple(config.get("input_size", [224, 224])),
-                temporal_frames=config.get("temporal_frames", 4),
-                pretrained=True,
+            def on_epoch(row):
+                self.training_state.epoch = row["epoch"]
+                self.training_state.train_loss = row["train_loss"]
+                self.training_state.val_accuracy = row["validation"]["button_exact"]
+                self.training_state.val_loss = row["validation"]["loss"]
+                self.emit("training:metrics", {
+                    **row, "phase": "learning", "val_loss": self.training_state.val_loss,
+                    "val_accuracy": self.training_state.val_accuracy,
+                })
+
+            result = run_cycle(
+                data_path, epochs=int(config.get("epochs", 5)),
+                batch_size=int(config.get("batch_size", 16)),
+                seq_len=int(config.get("temporal_frames", 4)),
+                learning_rate=float(config.get("learning_rate", .0005)),
+                device=config.get("device", "cpu"), stop=self._stop_training,
+                on_epoch=on_epoch,
             )
-
-            # Create curriculum config
-            curriculum = CurriculumConfig.default(total_epochs=config.get("epochs", 50))
-
-            # Create trainer
-            trainer = CurriculumTrainer(model, curriculum)
-
-            # Set callbacks for event emission
-            def on_epoch_end(metrics):
-                self.training_state.epoch = metrics.epoch
-                self.training_state.train_loss = metrics.train_loss
-                self.training_state.train_accuracy = metrics.train_accuracy
-                self.training_state.val_loss = metrics.val_loss
-                self.training_state.val_accuracy = metrics.val_accuracy
-                self.training_state.learning_rate = metrics.learning_rate
-
-                self.emit(
-                    "training:metrics",
-                    {
-                        "epoch": metrics.epoch,
-                        "phase": metrics.phase.value,
-                        "train_loss": metrics.train_loss,
-                        "train_accuracy": metrics.train_accuracy,
-                        "val_loss": metrics.val_loss,
-                        "val_accuracy": metrics.val_accuracy,
-                        "learning_rate": metrics.learning_rate,
-                    },
-                )
-
-            trainer._on_epoch_end = on_epoch_end
-
-            # TODO: Load actual data loaders
-            # For now, emit completion
-            self.emit("training:complete", {"status": "success"})
+            self.emit("training:complete", result)
 
         except Exception as e:
             logger.exception("Training error")
@@ -381,8 +355,7 @@ class CommandHandler:
     def handle_training_stop(self) -> Dict[str, Any]:
         """Stop current training."""
         self._stop_training.set()
-        self.training_state.is_training = False
-        return {"status": "stopped"}
+        return {"status": "stopping" if self.training_state.is_training else "stopped"}
 
     def handle_training_get_state(self) -> Dict[str, Any]:
         """Get current training state."""

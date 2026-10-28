@@ -1,16 +1,20 @@
+import argparse
+import json
 import os
+import signal
 import sys
 import time
-import signal
-import argparse
+import uuid
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from grabscreen import grab_screen
-from getkeys import key_check
+_RECORDING_SESSION_ID = uuid.uuid4().hex
+
 from getgamepad import gamepad_check
+from getkeys import key_check
+from grabscreen import grab_screen
 
 # Optional mouse capture (issues #21, #33, #36)
 # Enable via: set BOTMMO_CAPTURE_MOUSE=true (Windows) or --mouse flag
@@ -148,16 +152,16 @@ EXPECTED_GAMEPAD_LEN = 20  # 2 triggers + 4 axes + 14 buttons
 
 def gamepad_keys_to_output(values):
     """
-    Convert gamepad list to ints with fixed-length output.
+    Preserve analog gamepad values with fixed-length output.
     Expected order from your getgamepad.py:
     ['LT','RT','Lx','Ly','Rx','Ry','UP','DOWN','LEFT','RIGHT',
      'START','SELECT','L3','R3','LB','RB','A','B','X','Y']
 
-    Returns a list of exactly EXPECTED_GAMEPAD_LEN integers.
+    Returns exactly EXPECTED_GAMEPAD_LEN floating-point values.
     Pads with zeros if gamepad returns fewer values, truncates if more.
     This prevents the inhomogeneous shape ValueError in np.save (issue #15).
     """
-    out = [int(v) for v in values]
+    out = [float(v) for v in values]
     # Ensure consistent length to avoid inhomogeneous numpy array shapes
     if len(out) < EXPECTED_GAMEPAD_LEN:
         out.extend([0] * (EXPECTED_GAMEPAD_LEN - len(out)))
@@ -186,6 +190,8 @@ def save_chunk(path: Path, data: list) -> None:
     """
     arr = np.array(data, dtype=object)
     np.save(str(path), arr)
+    path.with_suffix(".session.json").write_text(
+        json.dumps({"session_id": _RECORDING_SESSION_ID}), encoding="utf-8")
     print(f"[SAVED] {path} ({len(data)} samples)")
 
 
@@ -216,6 +222,8 @@ def _resolve_output_dir(argv=None) -> Path:
 
 
 def main(argv=None):
+    global _RECORDING_SESSION_ID
+    _RECORDING_SESSION_ID = uuid.uuid4().hex
     output_dir = _resolve_output_dir(argv)
     out_path, idx = next_available_file(output_dir, FILE_PREFIX)
 
@@ -354,7 +362,7 @@ def main(argv=None):
                     mouse_state = mouse_capturer.snapshot()
                     parts.append(mouse_state.to_array())  # float32, shape (10,)
                 except Exception:
-                    pass  # Mouse failure must never break recording
+                    continue  # Discard incomplete sample; never change the action width
 
             output = np.concatenate(parts, axis=None)
 
